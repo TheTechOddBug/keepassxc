@@ -20,10 +20,13 @@
 #include "YubiKeyInterfacePCSC.h"
 #include "YubiKeyInterfaceUSB.h"
 
+#include <QMutexLocker>
+#include <QSet>
 #include <QtConcurrent>
 
+QMutex YubiKey::s_interfaceMutex;
+
 YubiKey::YubiKey()
-    : m_interfaces_detect_mutex(QMutex::Recursive)
 {
     int num_interfaces = 0;
 
@@ -40,7 +43,7 @@ YubiKey::YubiKey()
         connect(YubiKeyInterfacePCSC::instance(), SIGNAL(challengeStarted()), this, SIGNAL(challengeStarted()));
         connect(YubiKeyInterfacePCSC::instance(), SIGNAL(challengeCompleted()), this, SIGNAL(challengeCompleted()));
     } else {
-        qDebug("YubiKey: PCSC interface is disabled or not initialized.");
+        qDebug("YubiKey: PC/SC interface is disabled or not initialized.");
     }
 
     m_initialized = num_interfaces > 0;
@@ -70,101 +73,43 @@ bool YubiKey::isInitialized()
 
 bool YubiKey::findValidKeys()
 {
-    bool found = false;
-    if (m_interfaces_detect_mutex.tryLock(1000)) {
-        found |= YubiKeyInterfaceUSB::instance()->findValidKeys();
-        found |= YubiKeyInterfacePCSC::instance()->findValidKeys();
-        m_interfaces_detect_mutex.unlock();
-    }
-    return found;
+    // Block operations on hardware keys while scanning
+    QMutexLocker lock(&s_interfaceMutex);
+
+    m_connectedKeys = 0;
+    m_findingKeys = true;
+    m_usbKeys = YubiKeyInterfaceUSB::instance()->findValidKeys(m_connectedKeys);
+    m_pcscKeys = YubiKeyInterfacePCSC::instance()->findValidKeys(m_connectedKeys);
+    m_findingKeys = false;
+
+    return !m_usbKeys.isEmpty() || !m_pcscKeys.isEmpty();
 }
 
 void YubiKey::findValidKeysAsync()
 {
-    QtConcurrent::run([this] {
-        bool found = findValidKeys();
-        emit detectComplete(found);
-    });
+    // Don't start another scan if we are already doing one
+    if (!m_findingKeys) {
+        m_findingKeys = true;
+        QtConcurrent::run([this] { emit detectComplete(findValidKeys()); });
+    }
 }
 
-QList<YubiKeySlot> YubiKey::foundKeys()
+YubiKey::KeyMap YubiKey::foundKeys()
 {
-    QList<YubiKeySlot> foundKeys;
-
-    auto keys = YubiKeyInterfaceUSB::instance()->foundKeys();
-    QList<unsigned int> handledSerials = keys.uniqueKeys();
-    for (auto serial : handledSerials) {
-        for (const auto& key : keys.values(serial)) {
-            foundKeys.append({serial, key.first});
-        }
-    }
-
-    keys = YubiKeyInterfacePCSC::instance()->foundKeys();
-    for (auto serial : keys.uniqueKeys()) {
-        // Ignore keys that were detected on USB interface already
-        if (handledSerials.contains(serial)) {
-            continue;
-        }
-
-        for (const auto& key : keys.values(serial)) {
-            foundKeys.append({serial, key.first});
-        }
-    }
+    KeyMap foundKeys = m_usbKeys;
+    foundKeys.unite(m_pcscKeys);
 
     return foundKeys;
 }
 
-QString YubiKey::getDisplayName(YubiKeySlot slot)
+int YubiKey::connectedKeys()
 {
-    QString name;
-    name.clear();
-
-    if (YubiKeyInterfaceUSB::instance()->hasFoundKey(slot)) {
-        name += YubiKeyInterfaceUSB::instance()->getDisplayName(slot);
-    }
-
-    if (YubiKeyInterfacePCSC::instance()->hasFoundKey(slot)) {
-        // In some cases, the key might present on two interfaces
-        // This should usually never happen, because the PCSC interface
-        // filters the "virtual yubikey reader device".
-        if (!name.isNull()) {
-            name += " = ";
-        }
-        name += YubiKeyInterfacePCSC::instance()->getDisplayName(slot);
-    }
-
-    if (!name.isNull()) {
-        return name;
-    }
-
-    return tr("%1 No interface, slot %2").arg(QString::number(slot.first), QString::number(slot.second));
+    return m_connectedKeys;
 }
 
 QString YubiKey::errorMessage()
 {
-    QString error;
-    error.clear();
-    if (!m_error.isNull()) {
-        error += tr("General: ") + m_error;
-    }
-
-    QString usb_error = YubiKeyInterfaceUSB::instance()->errorMessage();
-    if (!usb_error.isNull()) {
-        if (!error.isNull()) {
-            error += " | ";
-        }
-        error += "USB: " + usb_error;
-    }
-
-    QString pcsc_error = YubiKeyInterfacePCSC::instance()->errorMessage();
-    if (!pcsc_error.isNull()) {
-        if (!error.isNull()) {
-            error += " | ";
-        }
-        error += "PCSC: " + pcsc_error;
-    }
-
-    return error;
+    return m_error;
 }
 
 /**
@@ -177,11 +122,13 @@ QString YubiKey::errorMessage()
  */
 bool YubiKey::testChallenge(YubiKeySlot slot, bool* wouldBlock)
 {
-    if (YubiKeyInterfaceUSB::instance()->hasFoundKey(slot)) {
+    QMutexLocker lock(&s_interfaceMutex);
+
+    if (m_usbKeys.contains(slot)) {
         return YubiKeyInterfaceUSB::instance()->testChallenge(slot, wouldBlock);
     }
 
-    if (YubiKeyInterfacePCSC::instance()->hasFoundKey(slot)) {
+    if (m_pcscKeys.contains(slot)) {
         return YubiKeyInterfacePCSC::instance()->testChallenge(slot, wouldBlock);
     }
 
@@ -202,21 +149,29 @@ YubiKey::challenge(YubiKeySlot slot, const QByteArray& challenge, Botan::secure_
 {
     m_error.clear();
 
-    // Make sure we tried to find available keys
-    if (foundKeys().isEmpty()) {
-        findValidKeys();
+    // Prevent re-entrant access to hardware keys
+    QMutexLocker lock(&s_interfaceMutex);
+
+    // Try finding key on the USB interface first
+    auto ret = YubiKeyInterfaceUSB::instance()->challenge(slot, challenge, response);
+    if (ret == ChallengeResult::YCR_ERROR) {
+        m_error = YubiKeyInterfaceUSB::instance()->errorMessage();
+        return ret;
     }
 
-    if (YubiKeyInterfaceUSB::instance()->hasFoundKey(slot)) {
-        return YubiKeyInterfaceUSB::instance()->challenge(slot, challenge, response);
+    // If a USB key was not found, try PC/SC interface
+    if (ret == ChallengeResult::YCR_KEYNOTFOUND) {
+        ret = YubiKeyInterfacePCSC::instance()->challenge(slot, challenge, response);
+        if (ret == ChallengeResult::YCR_ERROR) {
+            m_error = YubiKeyInterfacePCSC::instance()->errorMessage();
+            return ret;
+        }
     }
 
-    if (YubiKeyInterfacePCSC::instance()->hasFoundKey(slot)) {
-        return YubiKeyInterfacePCSC::instance()->challenge(slot, challenge, response);
+    if (ret == ChallengeResult::YCR_KEYNOTFOUND) {
+        m_error =
+            tr("Could not find hardware key with serial number %1. Please connect it to continue.").arg(slot.first);
     }
 
-    m_error = tr("Could not find interface for hardware key with serial number %1. Please connect it to continue.")
-                  .arg(slot.first);
-
-    return YubiKey::ChallengeResult::YCR_ERROR;
+    return ret;
 }

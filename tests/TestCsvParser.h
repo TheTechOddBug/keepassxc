@@ -19,7 +19,6 @@
 #ifndef KEEPASSX_TESTCSVPARSER_H
 #define KEEPASSX_TESTCSVPARSER_H
 
-#include <QFile>
 #include <QTemporaryFile>
 
 #include "format/CsvParser.h"
@@ -38,7 +37,6 @@ private slots:
 
     void testUnicode();
     void testLF();
-    void testEmptyReparsing();
     void testSimple();
     void testEmptyQuoted();
     void testEmptyNewline();
@@ -59,10 +57,11 @@ private slots:
     void testColumns();
 
 private:
+    void writeToFile(const QString& contents);
+
     QScopedPointer<QTemporaryFile> file;
     QScopedPointer<CsvParser> parser;
     CsvTable t;
-    void dumpRow(CsvTable table, int row);
 };
 
 #endif // KEEPASSX_TESTCSVPARSER_H

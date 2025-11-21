@@ -83,7 +83,7 @@ DatabaseOpenDialog::DatabaseOpenDialog(QWidget* parent)
 void DatabaseOpenDialog::showEvent(QShowEvent* event)
 {
     QDialog::showEvent(event);
-    QTimer::singleShot(100, this, [=] {
+    QTimer::singleShot(100, this, [this] {
         if (m_view->isOnQuickUnlockScreen() && !m_view->unlockingDatabase()) {
             m_view->triggerQuickUnlock();
         }
@@ -192,22 +192,52 @@ void DatabaseOpenDialog::clearForms()
     m_tabBar->blockSignals(false);
 }
 
+void DatabaseOpenDialog::showMessage(const QString& text, MessageWidget::MessageType type, int autoHideTimeout)
+{
+    m_view->showMessage(text, type, autoHideTimeout);
+}
+
 QSharedPointer<Database> DatabaseOpenDialog::database() const
 {
     return m_db;
+}
+
+void DatabaseOpenDialog::done(int result)
+{
+    hide();
+
+    emit dialogFinished(result == QDialog::Accepted, m_currentDbWidget);
+    clearForms();
+
+    QDialog::done(result);
+
+#if QT_VERSION < QT_VERSION_CHECK(6, 3, 0)
+    // CDialogs are not really closed, just hidden, pre Qt 6.3?
+    if (testAttribute(Qt::WA_DeleteOnClose)) {
+        setAttribute(Qt::WA_DeleteOnClose, false);
+        deleteLater();
+    }
+#endif
 }
 
 void DatabaseOpenDialog::complete(bool accepted)
 {
     // save DB, since DatabaseOpenWidget will reset its data after accept() is called
     m_db = m_view->database();
+    if (m_db && m_intent == Intent::RemoteSync) {
+        m_db->markAsTemporaryDatabase();
+    }
 
     if (accepted) {
         accept();
     } else {
         reject();
     }
+}
 
-    emit dialogFinished(accepted, m_currentDbWidget);
+void DatabaseOpenDialog::closeEvent(QCloseEvent* e)
+{
+    emit dialogFinished(false, m_currentDbWidget);
     clearForms();
+    QDialog::closeEvent(e);
 }

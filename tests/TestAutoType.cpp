@@ -30,13 +30,15 @@
 #include "crypto/Crypto.h"
 #include "gui/MessageBox.h"
 #include "gui/osutils/OSUtils.h"
+#include "util/TemporaryFile.h"
 
 QTEST_GUILESS_MAIN(TestAutoType)
 
 void TestAutoType::initTestCase()
 {
     QVERIFY(Crypto::init());
-    Config::createTempFileInstance();
+    // Create temporary config file
+    Config::createConfigFromFile(TemporaryFile::createTempConfigFile(), {});
     config()->set(Config::AutoTypeDelay, 1);
     config()->set(Config::Security_AutoTypeAsk, false);
     AutoType::createTestInstance();
@@ -62,8 +64,7 @@ void TestAutoType::init()
     m_db = QSharedPointer<Database>::create();
     m_dbList.clear();
     m_dbList.append(m_db);
-    m_group = new Group();
-    m_db->setRootGroup(m_group);
+    m_group = m_db->rootGroup();
 
     AutoTypeAssociations::Association association;
 
@@ -124,6 +125,20 @@ void TestAutoType::init()
     m_entry5->setPassword("example5");
     m_entry5->setTitle("some title");
     m_entry5->setUrl("http://example.org");
+
+    m_entry6 = new Entry();
+    m_entry6->setGroup(m_group);
+    m_entry6->setPassword("example6");
+    m_entry6->setTitle("empty window test");
+    association.window = "";
+    association.sequence = "{S:Empty Window}";
+    m_entry6->autoTypeAssociations()->add(association);
+    association.window = "non-matching window";
+    association.sequence = "should not match";
+    m_entry6->autoTypeAssociations()->add(association);
+    association.window = "*notepad*";
+    association.sequence = "{USERNAME}";
+    m_entry6->autoTypeAssociations()->add(association);
 }
 
 void TestAutoType::cleanup()
@@ -444,4 +459,14 @@ void TestAutoType::testAutoTypeEffectiveSequences()
     QCOMPARE(entry5->effectiveAutoTypeSequence(), QString());
     QCOMPARE(entry6->defaultAutoTypeSequence(), sequenceOrphan);
     QCOMPARE(entry6->effectiveAutoTypeSequence(), QString());
+}
+
+void TestAutoType::testAutoTypeEmptyWindowAssociation()
+{
+    auto assoc = m_entry6->autoTypeSequences("Windows Notepad");
+    QCOMPARE(assoc.size(), 2);
+    QVERIFY(assoc.contains("{S:Empty Window}"));
+
+    assoc = m_entry6->autoTypeSequences("Some Other Window");
+    QVERIFY(assoc.isEmpty());
 }

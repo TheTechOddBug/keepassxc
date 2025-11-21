@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2023 KeePassXC Team <team@keepassxc.org>
+ *  Copyright (C) 2025 KeePassXC Team <team@keepassxc.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -144,54 +144,6 @@ void TestBrowser::testBuildResponse()
     QCOMPARE(firstArr["test"].toBool(), true);
 }
 
-/**
- * Tests for BrowserService
- */
-void TestBrowser::testTopLevelDomain()
-{
-    QString url1 = "https://another.example.co.uk";
-    QString url2 = "https://www.example.com";
-    QString url3 = "http://test.net";
-    QString url4 = "http://so.many.subdomains.co.jp";
-    QString url5 = "https://192.168.0.1";
-    QString url6 = "https://192.168.0.1:8000";
-
-    QString res1 = m_browserService->getTopLevelDomainFromUrl(url1);
-    QString res2 = m_browserService->getTopLevelDomainFromUrl(url2);
-    QString res3 = m_browserService->getTopLevelDomainFromUrl(url3);
-    QString res4 = m_browserService->getTopLevelDomainFromUrl(url4);
-    QString res5 = m_browserService->getTopLevelDomainFromUrl(url5);
-    QString res6 = m_browserService->getTopLevelDomainFromUrl(url6);
-
-    QCOMPARE(res1, QString("example.co.uk"));
-    QCOMPARE(res2, QString("example.com"));
-    QCOMPARE(res3, QString("test.net"));
-    QCOMPARE(res4, QString("subdomains.co.jp"));
-    QCOMPARE(res5, QString("192.168.0.1"));
-    QCOMPARE(res6, QString("192.168.0.1"));
-}
-
-void TestBrowser::testIsIpAddress()
-{
-    auto host1 = "example.com"; // Not valid
-    auto host2 = "192.168.0.1";
-    auto host3 = "278.21.2.0"; // Not valid
-    auto host4 = "2001:0db8:85a3:0000:0000:8a2e:0370:7334";
-    auto host5 = "2001:db8:0:1:1:1:1:1";
-    auto host6 = "fe80::1ff:fe23:4567:890a";
-    auto host7 = "2001:20::1";
-    auto host8 = "2001:0db8:85y3:0000:0000:8a2e:0370:7334"; // Not valid
-
-    QVERIFY(!m_browserService->isIpAddress(host1));
-    QVERIFY(m_browserService->isIpAddress(host2));
-    QVERIFY(!m_browserService->isIpAddress(host3));
-    QVERIFY(m_browserService->isIpAddress(host4));
-    QVERIFY(m_browserService->isIpAddress(host5));
-    QVERIFY(m_browserService->isIpAddress(host6));
-    QVERIFY(m_browserService->isIpAddress(host7));
-    QVERIFY(!m_browserService->isIpAddress(host8));
-}
-
 void TestBrowser::testSortPriority()
 {
     QFETCH(QString, entryUrl);
@@ -218,26 +170,22 @@ void TestBrowser::testSortPriority_data()
     QTest::newRow("Exact Match") << siteUrl << siteUrl << siteUrl << 100;
     QTest::newRow("Exact Match (site)") << siteUrl << siteUrl << formUrl << 100;
     QTest::newRow("Exact Match (form)") << siteUrl << "https://github.net" << siteUrl << 100;
-    QTest::newRow("Exact Match No Trailing Slash") << "https://github.com"
-                                                   << "https://github.com/" << formUrl << 100;
+    QTest::newRow("Exact Match No Trailing Slash") << "https://github.com" << "https://github.com/" << formUrl << 100;
     QTest::newRow("Exact Match No Scheme") << "github.com/login" << siteUrl << formUrl << 100;
-    QTest::newRow("Exact Match with Query") << "https://github.com/login?test=test#fragment"
-                                            << "https://github.com/login?test=test" << formUrl << 100;
+    QTest::newRow("Exact Match with Query")
+        << "https://github.com/login?test=test#fragment" << "https://github.com/login?test=test" << formUrl << 100;
 
     QTest::newRow("Site Query Mismatch") << siteUrl << siteUrl + "?test=test" << formUrl << 90;
 
     QTest::newRow("Path Mismatch (site)") << "https://github.com/" << siteUrl << formUrl << 85;
     QTest::newRow("Path Mismatch (site) No Scheme") << "github.com" << siteUrl << formUrl << 85;
-    QTest::newRow("Path Mismatch (form)") << "https://github.com/"
-                                          << "https://github.net" << formUrl << 85;
+    QTest::newRow("Path Mismatch (form)") << "https://github.com/" << "https://github.net" << formUrl << 85;
     QTest::newRow("Path Mismatch (diff parent)") << "https://github.com/keepassxreboot" << siteUrl << formUrl << 80;
-    QTest::newRow("Path Mismatch (diff parent, form)") << "https://github.com/keepassxreboot"
-                                                       << "https://github.net" << formUrl << 70;
+    QTest::newRow("Path Mismatch (diff parent, form)")
+        << "https://github.com/keepassxreboot" << "https://github.net" << formUrl << 70;
 
-    QTest::newRow("Subdomain Mismatch (site)") << siteUrl << "https://sub.github.com/"
-                                               << "https://github.net/" << 60;
-    QTest::newRow("Subdomain Mismatch (form)") << siteUrl << "https://github.net/"
-                                               << "https://sub.github.com/" << 50;
+    QTest::newRow("Subdomain Mismatch (site)") << siteUrl << "https://sub.github.com/" << "https://github.net/" << 60;
+    QTest::newRow("Subdomain Mismatch (form)") << siteUrl << "https://github.net/" << "https://sub.github.com/" << 50;
 
     QTest::newRow("Scheme Mismatch") << "http://github.com" << siteUrl << formUrl << 0;
     QTest::newRow("Scheme Mismatch w/path") << "http://github.com/login" << siteUrl << formUrl << 0;
@@ -274,7 +222,7 @@ void TestBrowser::testSearchEntries()
     QCOMPARE(result[4]->url(), QString("http://github.com"));
     QCOMPARE(result[5]->url(), QString("http://github.com/login"));
 
-    // With matching there should be only 3 results + 4 without a scheme
+    // With matching there should be only 4 results + 4 without a scheme
     browserSettings()->setMatchUrlScheme(true);
     result = m_browserService->searchEntries(db, "https://github.com", "https://github.com/session");
     QCOMPARE(result.length(), 7);
@@ -389,8 +337,8 @@ void TestBrowser::testSearchEntriesByReference()
     auto secondEntryUuid = entries[1]->uuidToHex();
     auto fullReference = QString("{REF:A@I:%1}").arg(firstEntryUuid);
     auto partialReference = QString("https://subdomain.{REF:A@I:%1}").arg(secondEntryUuid);
-    entries[2]->attributes()->set(BrowserService::ADDITIONAL_URL, fullReference);
-    entries[3]->attributes()->set(BrowserService::ADDITIONAL_URL, partialReference);
+    entries[2]->attributes()->set(EntryAttributes::AdditionalUrlAttribute, fullReference);
+    entries[3]->attributes()->set(EntryAttributes::AdditionalUrlAttribute, partialReference);
     entries[4]->setUrl(fullReference);
     entries[5]->setUrl(partialReference);
 
@@ -399,11 +347,13 @@ void TestBrowser::testSearchEntriesByReference()
     QCOMPARE(result[0]->url(), urls[0]);
     QCOMPARE(result[1]->url(), urls[1]);
     QCOMPARE(result[2]->url(), urls[2]);
-    QCOMPARE(result[2]->resolveMultiplePlaceholders(result[2]->attributes()->value(BrowserService::ADDITIONAL_URL)),
-             urls[0]);
+    QCOMPARE(
+        result[2]->resolveMultiplePlaceholders(result[2]->attributes()->value(EntryAttributes::AdditionalUrlAttribute)),
+        urls[0]);
     QCOMPARE(result[3]->url(), urls[3]);
-    QCOMPARE(result[3]->resolveMultiplePlaceholders(result[3]->attributes()->value(BrowserService::ADDITIONAL_URL)),
-             urls[0]);
+    QCOMPARE(
+        result[3]->resolveMultiplePlaceholders(result[3]->attributes()->value(EntryAttributes::AdditionalUrlAttribute)),
+        urls[0]);
     QCOMPARE(result[4]->url(), fullReference);
     QCOMPARE(result[4]->resolveMultiplePlaceholders(result[4]->url()), urls[0]); // Should be resolved to the main entry
     QCOMPARE(result[5]->url(), partialReference);
@@ -434,7 +384,7 @@ void TestBrowser::testSearchEntriesWithAdditionalURLs()
     auto entries = createEntries(urls, root);
 
     // Add an additional URL to the first entry
-    entries.first()->attributes()->set(BrowserService::ADDITIONAL_URL, "https://keepassxc.org");
+    entries.first()->attributes()->set(EntryAttributes::AdditionalUrlAttribute, "https://keepassxc.org");
 
     auto result = m_browserService->searchEntries(db, "https://github.com", "https://github.com/session");
     QCOMPARE(result.length(), 1);
@@ -444,6 +394,120 @@ void TestBrowser::testSearchEntriesWithAdditionalURLs()
     auto additionalResult = m_browserService->searchEntries(db, "https://keepassxc.org", "https://keepassxc.org");
     QCOMPARE(additionalResult.length(), 1);
     QCOMPARE(additionalResult[0]->url(), QString("https://github.com/"));
+}
+
+void TestBrowser::testSearchEntriesWithWildcardURLs()
+{
+    auto db = QSharedPointer<Database>::create();
+    auto* root = db->rootGroup();
+
+    QStringList urls = {
+        "https://github.com/login_page/*",
+        "https://github.com/*/second",
+        "https://github.com/*",
+        "http://github.com/*",
+        "github.com/*", // Defaults to https
+        "https://*.github.com/*",
+        "https://subdomain.*.github.com/*/second",
+        "https://*.sub.github.com/*",
+        "https://********", // Invalid wildcard URL
+        "https://*.thub.com/", // Partial suffix URL
+        "https://subdomain.yes.github.com/*",
+        "https://example.com:8448/*",
+        "https://example.com/*/*",
+        "https://example.com/$/*",
+        "https://127.128.129.*:8448/",
+        "https://127.128.*/",
+        "https://127.160.*.2/login",
+        "http://[2001:db8:85a3:8d3:1319:8a2e:370:*]/",
+        "https://[2001:db8:85a3:8d3:*]:443/",
+        "fe80::1ff:fe23:4567:890a",
+        "2001-db8-85a3-8d3-1319-8a2e-370-7348.ipv6-literal.net",
+        "\"https://thisisatest.com/login.php\"" // Exact URL
+    };
+
+    createEntries(urls, root, true);
+    browserSettings()->setMatchUrlScheme(false);
+
+    // Return first Additional URL
+    auto firstUrl = [&](Entry* entry) { return entry->attributes()->value(EntryAttributes::AdditionalUrlAttribute); };
+
+    auto result = m_browserService->searchEntries(
+        db, "https://github.com/login_page/second", "https://github.com/login_page/second");
+    QCOMPARE(result.length(), 5);
+    QCOMPARE(firstUrl(result[0]), QString("https://github.com/login_page/*"));
+    QCOMPARE(firstUrl(result[1]), QString("https://github.com/*/second"));
+    QCOMPARE(firstUrl(result[2]), QString("https://github.com/*"));
+    QCOMPARE(firstUrl(result[3]), QString("http://github.com/*"));
+    QCOMPARE(firstUrl(result[4]), QString("github.com/*"));
+
+    result = m_browserService->searchEntries(
+        db, "https://subdomain.sub.github.com/login_page/second", "https://subdomain.sub.github.com/login_page/second");
+    QCOMPARE(result.length(), 3);
+    QCOMPARE(firstUrl(result[0]), QString("https://*.github.com/*"));
+    QCOMPARE(firstUrl(result[1]), QString("https://subdomain.*.github.com/*/second"));
+    QCOMPARE(firstUrl(result[2]), QString("https://*.sub.github.com/*"));
+
+    result = m_browserService->searchEntries(
+        db, "https://subdomain.sub.github.com/other_page", "https://subdomain.sub.github.com/other_page");
+    QCOMPARE(result.length(), 2);
+    QCOMPARE(firstUrl(result[0]), QString("https://*.github.com/*"));
+    QCOMPARE(firstUrl(result[1]), QString("https://*.sub.github.com/*"));
+
+    result = m_browserService->searchEntries(
+        db, "https://subdomain.yes.github.com/other_page/second", "https://subdomain.yes.github.com/other_page/second");
+    QCOMPARE(result.length(), 3);
+    QCOMPARE(firstUrl(result[0]), QString("https://*.github.com/*"));
+    QCOMPARE(firstUrl(result[1]), QString("https://subdomain.*.github.com/*/second"));
+    QCOMPARE(firstUrl(result[2]), QString("https://subdomain.yes.github.com/*"));
+
+    result = m_browserService->searchEntries(
+        db, "https://example.com:8448/login/page", "https://example.com:8448/login/page");
+    QCOMPARE(result.length(), 2);
+    QCOMPARE(firstUrl(result[0]), QString("https://example.com:8448/*"));
+    QCOMPARE(firstUrl(result[1]), QString("https://example.com/*/*"));
+
+    result = m_browserService->searchEntries(
+        db, "https://example.com:8449/login/page", "https://example.com:8449/login/page");
+    QCOMPARE(result.length(), 1);
+    QCOMPARE(firstUrl(result[0]), QString("https://example.com/*/*"));
+
+    result =
+        m_browserService->searchEntries(db, "https://example.com/$/login_page", "https://example.com/$/login_page");
+    QCOMPARE(result.length(), 2);
+    QCOMPARE(firstUrl(result[0]), QString("https://example.com/*/*"));
+    QCOMPARE(firstUrl(result[1]), QString("https://example.com/$/*"));
+
+    result = m_browserService->searchEntries(db, "https://127.128.129.130:8448/", "https://127.128.129.130:8448/");
+    QCOMPARE(result.length(), 2);
+
+    result = m_browserService->searchEntries(db, "https://127.128.129.130/", "https://127.128.129.130/");
+    QCOMPARE(result.length(), 1);
+    QCOMPARE(firstUrl(result[0]), QString("https://127.128.*/"));
+
+    result = m_browserService->searchEntries(db, "https://127.1.129.130/", "https://127.1.129.130/");
+    QCOMPARE(result.length(), 0);
+
+    result = m_browserService->searchEntries(db, "https://127.160.8.2/login", "https://127.160.8.2/login");
+    QCOMPARE(result.length(), 1);
+    QCOMPARE(firstUrl(result[0]), QString("https://127.160.*.2/login"));
+
+    // Exact URL
+    result =
+        m_browserService->searchEntries(db, "https://thisisatest.com/login.php", "https://thisisatest.com/login.php");
+    QCOMPARE(result.length(), 1);
+    QCOMPARE(firstUrl(result[0]), QString("\"https://thisisatest.com/login.php\""));
+
+    // With scheme matching enabled
+    browserSettings()->setMatchUrlScheme(true);
+    result = m_browserService->searchEntries(
+        db, "https://github.com/login_page/second", "https://github.com/login_page/second");
+
+    QCOMPARE(result.length(), 4);
+    QCOMPARE(firstUrl(result[0]), QString("https://github.com/login_page/*"));
+    QCOMPARE(firstUrl(result[1]), QString("https://github.com/*/second"));
+    QCOMPARE(firstUrl(result[2]), QString("https://github.com/*"));
+    QCOMPARE(firstUrl(result[3]), QString("github.com/*")); // Defaults to https
 }
 
 void TestBrowser::testInvalidEntries()
@@ -566,14 +630,18 @@ void TestBrowser::testSubdomainsAndPaths()
     QCOMPARE(result.length(), 1);
 }
 
-QList<Entry*> TestBrowser::createEntries(QStringList& urls, Group* root) const
+QList<Entry*> TestBrowser::createEntries(QStringList& urls, Group* root, bool additionalUrl) const
 {
     QList<Entry*> entries;
     for (int i = 0; i < urls.length(); ++i) {
         auto entry = new Entry();
         entry->setGroup(root);
         entry->beginUpdate();
-        entry->setUrl(urls[i]);
+        if (additionalUrl) {
+            entry->attributes()->set(EntryAttributes::AdditionalUrlAttribute, urls[i]);
+        } else {
+            entry->setUrl(urls[i]);
+        }
         entry->setUsername(QString("User %1").arg(i));
         entry->setUuid(QUuid::createUuid());
         entry->setTitle(QString("Name_%1").arg(entry->uuidToHex()));
@@ -582,26 +650,6 @@ QList<Entry*> TestBrowser::createEntries(QStringList& urls, Group* root) const
     }
 
     return entries;
-}
-void TestBrowser::testValidURLs()
-{
-    QHash<QString, bool> urls;
-    urls["https://github.com/login"] = true;
-    urls["https:///github.com/"] = false;
-    urls["http://github.com/**//*"] = false;
-    urls["http://*.github.com/login"] = false;
-    urls["//github.com"] = true;
-    urls["github.com/{}<>"] = false;
-    urls["http:/example.com"] = false;
-    urls["cmd://C:/Toolchains/msys2/usr/bin/mintty \"ssh jon@192.168.0.1:22\""] = true;
-    urls["file:///Users/testUser/Code/test.html"] = true;
-    urls["{REF:A@I:46C9B1FFBD4ABC4BBB260C6190BAD20C} "] = true;
-
-    QHashIterator<QString, bool> i(urls);
-    while (i.hasNext()) {
-        i.next();
-        QCOMPARE(Tools::checkUrlValid(i.key()), i.value());
-    }
 }
 
 void TestBrowser::testBestMatchingCredentials()
@@ -731,7 +779,7 @@ void TestBrowser::testBestMatchingWithAdditionalURLs()
     browserSettings()->setBestMatchOnly(true);
 
     // Add an additional URL to the first entry
-    entries.first()->attributes()->set(BrowserService::ADDITIONAL_URL, "https://test.github.com/anotherpage");
+    entries.first()->attributes()->set(EntryAttributes::AdditionalUrlAttribute, "https://test.github.com/anotherpage");
 
     // The first entry should be triggered
     auto result = m_browserService->searchEntries(
@@ -742,18 +790,67 @@ void TestBrowser::testBestMatchingWithAdditionalURLs()
     QCOMPARE(sorted[0]->url(), urls[0]);
 }
 
-void TestBrowser::testIsUrlIdentical()
+void TestBrowser::testRestrictBrowserKey()
 {
-    QVERIFY(browserService()->isUrlIdentical("https://example.com", "https://example.com"));
-    QVERIFY(browserService()->isUrlIdentical("https://example.com", "  https://example.com  "));
-    QVERIFY(!browserService()->isUrlIdentical("https://example.com", "https://example2.com"));
-    QVERIFY(!browserService()->isUrlIdentical("https://example.com/", "https://example.com/#login"));
-    QVERIFY(browserService()->isUrlIdentical("https://example.com", "https://example.com/"));
-    QVERIFY(browserService()->isUrlIdentical("https://example.com/", "https://example.com"));
-    QVERIFY(browserService()->isUrlIdentical("https://example.com/  ", "  https://example.com"));
-    QVERIFY(!browserService()->isUrlIdentical("https://example.com/", "  example.com"));
-    QVERIFY(browserService()->isUrlIdentical("https://example.com/path/to/nowhere",
-                                             "https://example.com/path/to/nowhere/"));
-    QVERIFY(!browserService()->isUrlIdentical("https://example.com/", "://example.com/"));
-    QVERIFY(browserService()->isUrlIdentical("ftp://127.0.0.1/", "ftp://127.0.0.1"));
+    auto db = QSharedPointer<Database>::create();
+    auto* root = db->rootGroup();
+
+    // Group 0 (root): No browser key restriction given
+    QStringList urlsRoot = {"https://example.com/0"};
+    auto entriesRoot = createEntries(urlsRoot, root);
+
+    // Group 1: restricted to browser with 'key1'
+    auto* group1 = new Group();
+    group1->setParent(root);
+    group1->setName("TestGroup1");
+    group1->customData()->set(BrowserService::OPTION_RESTRICT_KEY, "key1");
+    QStringList urls1 = {"https://example.com/1"};
+    auto entries1 = createEntries(urls1, group1);
+
+    // Group 2: restricted to browser with 'key2'
+    auto* group2 = new Group();
+    group2->setParent(root);
+    group2->setName("TestGroup2");
+    group2->customData()->set(BrowserService::OPTION_RESTRICT_KEY, "key2");
+    QStringList urls2 = {"https://example.com/2"};
+    auto entries2 = createEntries(urls2, group2);
+
+    // Group 2b: inherits parent group (2) restriction
+    auto* group2b = new Group();
+    group2b->setParent(group2);
+    group2b->setName("TestGroup2b");
+    QStringList urls2b = {"https://example.com/2b"};
+    auto entries2b = createEntries(urls2b, group2b);
+
+    // Group 3: inherits parent group (root) - any browser can see
+    auto* group3 = new Group();
+    group3->setParent(root);
+    group3->setName("TestGroup3");
+    QStringList urls3 = {"https://example.com/3"};
+    auto entries3 = createEntries(urls3, group3);
+
+    // Browser 'key0': Groups 1 and 2 are excluded, so entries 0 and 3 will be found
+    auto siteUrl = QString("https://example.com");
+    auto result = m_browserService->searchEntries(db, siteUrl, siteUrl, {"key0"});
+    auto sorted = m_browserService->sortEntries(result, siteUrl, siteUrl);
+    QCOMPARE(sorted.size(), 2);
+    QCOMPARE(sorted[0]->url(), QString("https://example.com/3"));
+    QCOMPARE(sorted[1]->url(), QString("https://example.com/0"));
+
+    // Browser 'key1': Group 2 will be excluded, so entries 0, 1, and 3 will be found
+    result = m_browserService->searchEntries(db, siteUrl, siteUrl, {"key1"});
+    sorted = m_browserService->sortEntries(result, siteUrl, siteUrl);
+    QCOMPARE(sorted.size(), 3);
+    QCOMPARE(sorted[0]->url(), QString("https://example.com/3"));
+    QCOMPARE(sorted[1]->url(), QString("https://example.com/1"));
+    QCOMPARE(sorted[2]->url(), QString("https://example.com/0"));
+
+    // Browser 'key2': Group 1 will be excluded, so entries 0, 2, 2b, 3 will be found
+    result = m_browserService->searchEntries(db, siteUrl, siteUrl, {"key2"});
+    sorted = m_browserService->sortEntries(result, siteUrl, siteUrl);
+    QCOMPARE(sorted.size(), 4);
+    QCOMPARE(sorted[0]->url(), QString("https://example.com/3"));
+    QCOMPARE(sorted[1]->url(), QString("https://example.com/2b"));
+    QCOMPARE(sorted[2]->url(), QString("https://example.com/2"));
+    QCOMPARE(sorted[3]->url(), QString("https://example.com/0"));
 }

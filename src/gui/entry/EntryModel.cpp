@@ -21,6 +21,7 @@
 #include <QMimeData>
 #include <QPalette>
 
+#include "core/Clock.h"
 #include "core/Entry.h"
 #include "core/Group.h"
 #include "core/Metadata.h"
@@ -36,7 +37,6 @@ EntryModel::EntryModel(QObject* parent)
     : QAbstractTableModel(parent)
     , m_group(nullptr)
     , HiddenContentDisplay(QString("\u25cf").repeated(6))
-    , DateFormat(Qt::DefaultLocaleShortDate)
 {
     connect(config(), &Config::changed, this, &EntryModel::onConfigChanged);
 }
@@ -116,7 +116,7 @@ int EntryModel::columnCount(const QModelIndex& parent) const
         return 0;
     }
 
-    return 16;
+    return 17;
 }
 
 QVariant EntryModel::data(const QModelIndex& index, int role) const
@@ -134,6 +134,11 @@ QVariant EntryModel::data(const QModelIndex& index, int role) const
         case ParentGroup:
             if (entry->group()) {
                 return entry->group()->name();
+            }
+            break;
+        case ParentGroupPath:
+            if (entry->group()) {
+                return entry->group()->fullPath();
             }
             break;
         case Title:
@@ -189,18 +194,14 @@ QVariant EntryModel::data(const QModelIndex& index, int role) const
             return result;
         case Expires:
             // Display either date of expiry or 'Never'
-            result = entry->timeInfo().expires()
-                         ? entry->timeInfo().expiryTime().toLocalTime().toString(EntryModel::DateFormat)
-                         : tr("Never");
+            result = entry->timeInfo().expires() ? Clock::toString(entry->timeInfo().expiryTime().toLocalTime())
+                                                 : tr("Never");
             return result;
         case Created:
-            result = entry->timeInfo().creationTime().toLocalTime().toString(EntryModel::DateFormat);
+            result = Clock::toString(entry->timeInfo().creationTime().toLocalTime());
             return result;
         case Modified:
-            result = entry->timeInfo().lastModificationTime().toLocalTime().toString(EntryModel::DateFormat);
-            return result;
-        case Accessed:
-            result = entry->timeInfo().lastAccessTime().toLocalTime().toString(EntryModel::DateFormat);
+            result = Clock::toString(entry->timeInfo().lastModificationTime().toLocalTime());
             return result;
         case Attachments: {
             // Display comma-separated list of attachments
@@ -251,14 +252,17 @@ QVariant EntryModel::data(const QModelIndex& index, int role) const
             return 0;
         }
         case Expires:
+            return entry->timeInfo().expires() ? entry->timeInfo().expiryTime()
             // There seems to be no better way of expressing 'infinity'
-            return entry->timeInfo().expires() ? entry->timeInfo().expiryTime() : QDateTime(QDate(9999, 1, 1));
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+                                               : QDate(9999, 1, 1).startOfDay();
+#else
+                                               : QDateTime(QDate(9999, 1, 1));
+#endif
         case Created:
             return entry->timeInfo().creationTime();
         case Modified:
             return entry->timeInfo().lastModificationTime();
-        case Accessed:
-            return entry->timeInfo().lastAccessTime();
         case Paperclip:
             // Display entries with attachments above those without when
             // sorting ascendingly (and vice versa when sorting descendingly)
@@ -288,29 +292,35 @@ QVariant EntryModel::data(const QModelIndex& index, int role) const
             break;
         case Totp:
             if (entry->hasTotp()) {
-                return icons()->icon("totp");
+                return entry->hasValidTotp() ? icons()->icon("totp") : icons()->icon("totp-invalid");
             }
             break;
         case PasswordStrength:
             if (!entry->password().isEmpty() && !entry->excludeFromReports()) {
+                QString iconName = "lock-question";
                 StateColorPalette statePalette;
                 QColor color = statePalette.color(StateColorPalette::Error);
 
                 switch (entry->passwordHealth()->quality()) {
                 case PasswordHealth::Quality::Bad:
                 case PasswordHealth::Quality::Poor:
+                    iconName = "lock-open-alert";
                     color = statePalette.color(StateColorPalette::HealthCritical);
                     break;
                 case PasswordHealth::Quality::Weak:
+                    iconName = "lock-open";
                     color = statePalette.color(StateColorPalette::HealthBad);
                     break;
                 case PasswordHealth::Quality::Good:
                 case PasswordHealth::Quality::Excellent:
+                    iconName = "lock";
                     color = statePalette.color(StateColorPalette::HealthExcellent);
                     break;
                 }
 
-                return color;
+                if (color.isValid()) {
+                    return icons()->icon(iconName, true, color);
+                }
             }
             break;
         }
@@ -367,6 +377,8 @@ QVariant EntryModel::headerData(int section, Qt::Orientation orientation, int ro
         switch (section) {
         case ParentGroup:
             return tr("Group");
+        case ParentGroupPath:
+            return tr("Group Path");
         case Title:
             return tr("Title");
         case Username:
@@ -383,8 +395,6 @@ QVariant EntryModel::headerData(int section, Qt::Orientation orientation, int ro
             return tr("Created");
         case Modified:
             return tr("Modified");
-        case Accessed:
-            return tr("Accessed");
         case Attachments:
             return tr("Attachments");
         case Size:
@@ -404,6 +414,8 @@ QVariant EntryModel::headerData(int section, Qt::Orientation orientation, int ro
         switch (section) {
         case ParentGroup:
             return tr("Group name");
+        case ParentGroupPath:
+            return tr("Group Path");
         case Title:
             return tr("Entry title");
         case Username:
@@ -422,8 +434,6 @@ QVariant EntryModel::headerData(int section, Qt::Orientation orientation, int ro
             return tr("Creation date");
         case Modified:
             return tr("Last modification date");
-        case Accessed:
-            return tr("Last access date");
         case Attachments:
             return tr("Attached files");
         case Size:

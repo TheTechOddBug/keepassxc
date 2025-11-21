@@ -58,6 +58,7 @@
 #include <QSignalSpy>
 #include <QTest>
 #include <QtConcurrent>
+#include <zxcvbn.h>
 
 QTEST_MAIN(TestCli)
 
@@ -65,7 +66,10 @@ void TestCli::initTestCase()
 {
     QVERIFY(Crypto::init());
 
-    Config::createTempFileInstance();
+    // Create temporary config file
+    Config::createConfigFromFile(TemporaryFile::createTempConfigFile(), {});
+
+    QLocale::setDefault(QLocale::c());
     Bootstrap::bootstrap();
 
     m_devNull.reset(new QFile());
@@ -648,6 +652,7 @@ void TestCli::testClip()
         || errorOutput.contains("No program defined for clipboard manipulation")) {
         QSKIP("Clip test skipped due to missing clipboard tool");
     }
+    QVERIFY(!errorOutput.contains("All clipping programs failed"));
 
     m_stderr->readLine(); // Skip password prompt
     QCOMPARE(m_stderr->readAll(), QByteArray());
@@ -1021,7 +1026,7 @@ void TestCli::testInfo()
     QCOMPARE(m_stdout->readLine(), QByteArray("Number of short passwords: 0\n"));
     QCOMPARE(m_stdout->readLine(), QByteArray("Number of weak passwords: 2\n"));
     QCOMPARE(m_stdout->readLine(), QByteArray("Entries excluded from reports: 0\n"));
-    QCOMPARE(m_stdout->readLine(), QByteArray("Average password length: 11 characters\n"));
+    QCOMPARE(m_stdout->readLine(), QByteArray("Average password length: 11 character(s)\n"));
 
     // Test with quiet option.
     setInput("a");
@@ -1084,8 +1089,9 @@ void TestCli::testDiceware()
     }
     smallWordFile.close();
 
+    // Ensure a warning is shown if the wordlist is too short
     execCmd(dicewareCmd, {"diceware", "-W", "11", "-w", smallWordFile.fileName()});
-    QCOMPARE(m_stderr->readLine(), QByteArray("The word list is too small (< 1000 items)\n"));
+    QVERIFY(m_stderr->readLine().length() > 0);
 }
 
 void TestCli::testEdit()
@@ -1185,89 +1191,71 @@ void TestCli::testEdit()
 
 void TestCli::testEstimate_data()
 {
+    // clang-format off
     QTest::addColumn<QString>("input");
-    QTest::addColumn<QString>("length");
-    QTest::addColumn<QString>("entropy");
-    QTest::addColumn<QString>("log10");
     QTest::addColumn<QStringList>("searchStrings");
 
-    QTest::newRow("Dictionary") << "password"
-                                << "8"
-                                << "1.0"
-                                << "0.3" << QStringList{"Type: Dictionary", "\tpassword"};
+    QTest::newRow("Dictionary")
+        << "password"
+        << QStringList{"Type: Dictionary", "\tpassword"};
 
-    QTest::newRow("Spatial") << "zxcv"
-                             << "4"
-                             << "10.3"
-                             << "3.1" << QStringList{"Type: Spatial", "\tzxcv"};
+    QTest::newRow("Spatial")
+        << "sdfg"
+        << QStringList{"Type: Spatial", "\tsdfg"};
 
-    QTest::newRow("Spatial(Rep)") << "sdfgsdfg"
-                                  << "8"
-                                  << "11.3"
-                                  << "3.4" << QStringList{"Type: Spatial(Rep)", "\tsdfgsdfg"};
+    QTest::newRow("Spatial(Rep)")
+        << "sdfgsdfg"
+        << QStringList{"Type: Spatial(Rep)", "\tsdfgsdfg"};
 
     QTest::newRow("Dictionary / Sequence")
         << "password123"
-        << "11"
-        << "4.5"
-        << "1.3" << QStringList{"Type: Dictionary", "Type: Sequence", "\tpassword", "\t123"};
+        << QStringList{"Type: Dictionary", "Type: Sequence", "\tpassword", "\t123"};
 
-    QTest::newRow("Dict+Leet") << "p455w0rd"
-                               << "8"
-                               << "2.5"
-                               << "0.7" << QStringList{"Type: Dict+Leet", "\tp455w0rd"};
+    QTest::newRow("Dict+Leet")
+        << "p455w0rd"
+        << QStringList{"Type: Dict+Leet", "\tp455w0rd"};
 
-    QTest::newRow("Dictionary(Rep)") << "hellohello"
-                                     << "10"
-                                     << "7.3"
-                                     << "2.2" << QStringList{"Type: Dictionary(Rep)", "\thellohello"};
+    QTest::newRow("Dictionary(Rep)")
+        << "hellohello"
+        << QStringList{"Type: Dictionary(Rep)", "\thellohello"};
 
     QTest::newRow("Sequence(Rep) / Dictionary")
         << "456456foobar"
-        << "12"
-        << "16.7"
-        << "5.0" << QStringList{"Type: Sequence(Rep)", "Type: Dictionary", "\t456456", "\tfoobar"};
+        << QStringList{"Type: Sequence(Rep)", "Type: Dictionary", "\t456456", "\tfoobar"};
 
     QTest::newRow("Bruteforce(Rep) / Bruteforce")
         << "xzxzy"
-        << "5"
-        << "16.1"
-        << "4.8" << QStringList{"Type: Bruteforce(Rep)", "Type: Bruteforce", "\txzxz", "\ty"};
+        << QStringList{"Type: Bruteforce(Rep)", "Type: Bruteforce", "\txzxz", "\ty"};
 
     QTest::newRow("Dictionary / Date(Rep)")
         << "pass20182018"
-        << "12"
-        << "15.1"
-        << "4.56" << QStringList{"Type: Dictionary", "Type: Date(Rep)", "\tpass", "\t20182018"};
+        << QStringList{"Type: Dictionary", "Type: Date(Rep)", "\tpass", "\t20182018"};
 
     QTest::newRow("Dictionary / Date / Bruteforce")
         << "mypass2018-2"
-        << "12"
-        << "32.9"
-        << "9.9" << QStringList{"Type: Dictionary", "Type: Date", "Type: Bruteforce", "\tmypass", "\t2018", "\t-2"};
+        << QStringList{"Type: Dictionary", "Type: Date", "Type: Bruteforce", "\tmypass", "\t2018", "\t-2"};
 
-    QTest::newRow("Strong Password") << "E*!%.Qw{t.X,&bafw)\"Q!ah$%;U/"
-                                     << "28"
-                                     << "165.7"
-                                     << "49.8" << QStringList{"Type: Bruteforce", "\tE*"};
+    QTest::newRow("Strong Password")
+        << "E*!%.Qw{t.X,&bafw)\"Q!ah$%;U/"
+        << QStringList{"Type: Bruteforce", "\tE*"};
 
     // TODO: detect passphrases and adjust entropy calculation accordingly (issue #2347)
     QTest::newRow("Strong Passphrase")
         << "squint wooing resupply dangle isolation axis headsman"
-        << "53"
-        << "151.2"
-        << "45.5"
-        << QStringList{
-               "Type: Dictionary", "Type: Bruteforce", "Multi-word extra bits 22.0", "\tsquint", "\t ", "\twooing"};
+        << QStringList{"Type: Dictionary", "Type: Bruteforce", "Multi-word extra bits 22.0", "\tsquint", "\t ", "\twooing"};
+    // clang-format on
 }
 
 void TestCli::testEstimate()
 {
     QFETCH(QString, input);
-    QFETCH(QString, length);
-    QFETCH(QString, entropy);
-    QFETCH(QString, log10);
     QFETCH(QStringList, searchStrings);
+
+    // Calculate expected values since zxcvbn output can vary by platform if different wordlists are used
+    const auto e = ZxcvbnMatch(input.toUtf8(), nullptr, nullptr);
+    auto length = QString::number(input.length());
+    auto entropy = QString("%1").arg(e, 0, 'f', 3);
+    auto log10 = QString("%1").arg(e * 0.301029996, 0, 'f', 3);
 
     Estimate estimateCmd;
     QVERIFY(!estimateCmd.name.isEmpty());
@@ -1326,6 +1314,18 @@ void TestCli::testExport()
     QVERIFY(csvData.contains(QByteArray(
         "\"NewDatabase\",\"Sample Entry\",\"User Name\",\"Password\",\"http://www.somesite.com/\",\"Notes\"")));
 
+    // HTML exporting
+    setInput("a");
+    execCmd(exportCmd, {"export", "-f", "html", m_dbFile->fileName()});
+    QByteArray htmlHeader = m_stdout->readLine();
+    QVERIFY(htmlHeader.contains(QByteArray("<meta charset=\"UTF-8\"><title></title>")));
+    QByteArray htmlBody = m_stdout->readAll();
+    QVERIFY(htmlBody.contains(QByteArray("<h2>NewDatabase</h2>")));
+    QVERIFY(htmlBody.contains(QByteArray("<caption>Sample Entry</caption>"
+                                         "<tr><th>User name</th><td class=\"username\">User Name</td></tr>"
+                                         "<tr><th>Password</th><td class=\"password\">Password</td></tr>"
+                                         "<tr><th>URL</th><td class=\"url\"><a "
+                                         "href=\"http://www.somesite.com/\">http://www.somesite.com/</a></td></tr>")));
     // test invalid format
     setInput("a");
     execCmd(exportCmd, {"export", "-f", "yaml", m_dbFile->fileName()});
@@ -1682,8 +1682,9 @@ void TestCli::testMerge()
     m_stderr->readLine(); // Skip password prompt
     QCOMPARE(m_stderr->readAll(), QByteArray());
     QList<QByteArray> outLines1 = m_stdout->readAll().split('\n');
-    QVERIFY(outLines1.at(0).contains("Overwriting Internet"));
-    QVERIFY(outLines1.at(1).contains("Creating missing Some Website"));
+    QVERIFY(outLines1.at(0).contains("Modified"));
+    QVERIFY(outLines1.at(0).contains("Modification time"));
+    QVERIFY(outLines1.at(1).contains("Added"));
     QCOMPARE(outLines1.at(2),
              QString("Successfully merged %1 into %2.").arg(sourceFile.fileName(), targetFile1.fileName()).toUtf8());
 
@@ -1699,8 +1700,9 @@ void TestCli::testMerge()
     setInput("a");
     execCmd(mergeCmd, {"merge", "--dry-run", "-s", targetFile2.fileName(), sourceFile.fileName()});
     QList<QByteArray> outLines2 = m_stdout->readAll().split('\n');
-    QVERIFY(outLines2.at(0).contains("Overwriting Internet"));
-    QVERIFY(outLines2.at(1).contains("Creating missing Some Website"));
+    QVERIFY(outLines1.at(0).contains("Modified"));
+    QVERIFY(outLines1.at(0).contains("Modification time"));
+    QVERIFY(outLines2.at(1).contains("Added"));
     QCOMPARE(outLines2.at(2), QByteArray("Database was not modified by merge operation."));
 
     mergedDb = QSharedPointer<Database>::create();
@@ -1797,7 +1799,8 @@ void TestCli::testMergeWithKeys()
     entry->setPassword("secretsecretsecret");
     group->addEntry(entry);
 
-    sourceDatabase->setRootGroup(rootGroup);
+    auto oldGroup = sourceDatabase->setRootGroup(rootGroup);
+    delete oldGroup;
 
     auto* otherRootGroup = new Group();
     otherRootGroup->setName("root");
@@ -1813,7 +1816,8 @@ void TestCli::testMergeWithKeys()
     otherEntry->setPassword("secretsecretsecret 2");
     otherGroup->addEntry(otherEntry);
 
-    targetDatabase->setRootGroup(otherRootGroup);
+    oldGroup = targetDatabase->setRootGroup(otherRootGroup);
+    delete oldGroup;
 
     sourceDatabase->saveAs(sourceDatabaseFilename);
     targetDatabase->saveAs(targetDatabaseFilename);
@@ -2126,7 +2130,7 @@ void TestCli::testShow()
                         "Tags: \n"
                         "\n"
                         "Attachments:\n"
-                        "  Sample attachment.txt (15.0 B)\n"));
+                        "  Sample attachment.txt (15 B)\n"));
 
     setInput("a");
     execCmd(showCmd, {"show", m_dbFile->fileName(), "--show-attachments", "/Homebanking/Subgroup/Subgroup Entry"});
@@ -2252,7 +2256,7 @@ void TestCli::testYubiKeyOption()
 
     YubiKey::instance()->findValidKeys();
 
-    auto keys = YubiKey::instance()->foundKeys();
+    const auto keys = YubiKey::instance()->foundKeys().keys();
     if (keys.isEmpty()) {
         QSKIP("No YubiKey devices were detected.");
     }

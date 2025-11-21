@@ -1,6 +1,6 @@
 /*
+ *  Copyright (C) 2025 KeePassXC Team <team@keepassxc.org>
  *  Copyright (C) 2010 Felix Geyer <debfx@fobos.de>
- *  Copyright (C) 2021 KeePassXC Team <team@keepassxc.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -39,9 +39,6 @@ public:
     enum MergeMode
     {
         Default, // Determine merge strategy from parent or fallback (Synchronize)
-        Duplicate, // lossy strategy regarding deletions, duplicate older changes in a new entry
-        KeepLocal, // merge history forcing local as top regardless of age
-        KeepRemote, // merge history forcing remote as top regardless of age
         KeepNewer, // merge history
         Synchronize, // merge history keeping most recent as top entry and applying deletions
     };
@@ -85,6 +82,7 @@ public:
     QString name() const;
     QString notes() const;
     QString tags() const;
+    QString fullPath() const;
     int iconNumber() const;
     const QUuid& iconUuid() const;
     const TimeInfo& timeInfo() const;
@@ -96,14 +94,17 @@ public:
     Group::MergeMode mergeMode() const;
     bool resolveSearchingEnabled() const;
     bool resolveAutoTypeEnabled() const;
+    bool resolveBrowserOptionEnabled(const QString& option) const;
     Entry* lastTopVisibleEntry() const;
     bool isExpired() const;
     bool isRecycled() const;
     bool isEmpty() const;
+    bool isShared() const;
     CustomData* customData();
     const CustomData* customData() const;
     Group::TriState resolveCustomDataTriState(const QString& key, bool checkParent = true) const;
     void setCustomDataTriState(const QString& key, const Group::TriState& value);
+    QString resolveCustomDataString(const QString& key, bool checkParent = true) const;
     const Group* previousParentGroup() const;
     QUuid previousParentGroupUuid() const;
 
@@ -155,7 +156,6 @@ public:
     const QList<Group*>& children() const;
     QList<Entry*> entries();
     const QList<Entry*>& entries() const;
-    Entry* findEntryRecursive(const QString& text, EntryReferenceType referenceType, Group* group = nullptr);
     QList<Entry*> referencesRecursive(const Entry* entry) const;
     QList<Entry*> entriesRecursive(bool includeHistoryItems = false) const;
     QList<const Group*> groupsRecursive(bool includeSelf) const;
@@ -229,9 +229,7 @@ private:
 
     bool m_updateTimeinfo;
 
-    friend void Database::setRootGroup(Group* group);
-    friend Entry::~Entry();
-    friend void Entry::setGroup(Group* group, bool trackPrevious);
+    friend Group* Database::setRootGroup(Group* group);
 };
 
 Q_DECLARE_OPERATORS_FOR_FLAGS(Group::CloneFlags)

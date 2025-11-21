@@ -1,6 +1,6 @@
 /*
+ *  Copyright (C) 2023 KeePassXC Team <team@keepassxc.org>
  *  Copyright (C) 2010 Felix Geyer <debfx@fobos.de>
- *  Copyright (C) 2021 KeePassXC Team <team@keepassxc.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -38,6 +38,7 @@
 #include "core/EntryAttributes.h"
 #include "core/Group.h"
 #include "core/Metadata.h"
+#include "core/PasswordGenerator.h"
 #include "core/TimeDelta.h"
 #ifdef WITH_XC_SSHAGENT
 #include "sshagent/OpenSSHKey.h"
@@ -53,6 +54,7 @@
 #include "gui/EditWidgetProperties.h"
 #include "gui/FileDialog.h"
 #include "gui/Font.h"
+#include "gui/GuiTools.h"
 #include "gui/Icons.h"
 #include "gui/MessageBox.h"
 #include "gui/entry/AutoTypeAssociationsModel.h"
@@ -115,6 +117,7 @@ EditEntryWidget::EditEntryWidget(QWidget* parent)
     m_entryModifiedTimer.setSingleShot(true);
     m_entryModifiedTimer.setInterval(0);
     connect(&m_entryModifiedTimer, &QTimer::timeout, this, [this] {
+        // TODO: Upon refactor of this widget, this needs to merge unsaved changes in the UI
         if (isVisible() && m_entry) {
             setForms(m_entry);
         }
@@ -138,12 +141,56 @@ EditEntryWidget::EditEntryWidget(QWidget* parent)
 
 EditEntryWidget::~EditEntryWidget() = default;
 
+bool EditEntryWidget::switchToPage(Page page)
+{
+    auto index = pageIndex(widgetForPage(page));
+    if (index >= 0) {
+        setCurrentPage(index);
+        return true;
+    }
+    return false;
+}
+
+QWidget* EditEntryWidget::widgetForPage(Page page) const
+{
+    switch (page) {
+    case Page::Main:
+        return m_mainWidget;
+    case Page::Advanced:
+        return m_advancedWidget;
+    case Page::Icon:
+        return m_iconsWidget;
+    case Page::AutoType:
+        return m_autoTypeWidget;
+    case Page::Browser:
+#ifdef WITH_XC_BROWSER
+        return m_browserWidget;
+#else
+        return nullptr;
+#endif
+    case Page::SSHAgent:
+#ifdef WITH_XC_SSHAGENT
+        return m_sshAgentWidget;
+#else
+        return nullptr;
+#endif
+    case Page::Properties:
+        return m_editWidgetProperties;
+    case Page::History:
+        return m_historyWidget;
+    }
+    return nullptr;
+}
+
 void EditEntryWidget::setupMain()
 {
     m_mainUi->setupUi(m_mainWidget);
     addPage(tr("Entry"), icons()->icon("document-edit"), m_mainWidget);
 
+    // Disable mouse wheel grab when scrolling
+    m_mainUi->usernameComboBox->installEventFilter(new MouseWheelEventFilter(this));
     m_mainUi->usernameComboBox->setEditable(true);
+    m_mainUi->usernameComboBox->lineEdit()->setFocusPolicy(Qt::StrongFocus);
     m_usernameCompleter->setCompletionMode(QCompleter::InlineCompletion);
     m_usernameCompleter->setCaseSensitivity(Qt::CaseSensitive);
     m_usernameCompleter->setModel(m_usernameCompleterModel);
@@ -329,11 +376,11 @@ void EditEntryWidget::insertURL()
 {
     Q_ASSERT(!m_history);
 
-    QString name(BrowserService::ADDITIONAL_URL);
+    QString name(EntryAttributes::AdditionalUrlAttribute);
     int i = 1;
 
     while (m_entryAttributes->keys().contains(name)) {
-        name = QString("%1_%2").arg(BrowserService::ADDITIONAL_URL, QString::number(i));
+        name = QString("%1_%2").arg(EntryAttributes::AdditionalUrlAttribute, QString::number(i));
         i++;
     }
 
@@ -564,6 +611,7 @@ void EditEntryWidget::setupSSHAgent()
     connect(m_sshAgentUi->browseButton, &QPushButton::clicked, this, &EditEntryWidget::browsePrivateKey);
     connect(m_sshAgentUi->addToAgentButton, &QPushButton::clicked, this, &EditEntryWidget::addKeyToAgent);
     connect(m_sshAgentUi->removeFromAgentButton, &QPushButton::clicked, this, &EditEntryWidget::removeKeyFromAgent);
+    connect(m_sshAgentUi->clearAgentButton, &QPushButton::clicked, this, &EditEntryWidget::clearAgent);
     connect(m_sshAgentUi->decryptButton, &QPushButton::clicked, this, &EditEntryWidget::decryptPrivateKey);
     connect(m_sshAgentUi->copyToClipboardButton, &QPushButton::clicked, this, &EditEntryWidget::copyPublicKey);
     connect(m_sshAgentUi->generateButton, &QPushButton::clicked, this, &EditEntryWidget::generatePrivateKey);
@@ -660,29 +708,24 @@ void EditEntryWidget::updateSSHAgentKeyInfo()
     if (!key.fingerprint().isEmpty()) {
         m_sshAgentUi->fingerprintTextLabel->setText(key.fingerprint(QCryptographicHash::Md5) + "\n"
                                                     + key.fingerprint(QCryptographicHash::Sha256));
-    } else {
-        m_sshAgentUi->fingerprintTextLabel->setText(tr("(encrypted)"));
     }
 
-    if (!key.comment().isEmpty() || !key.encrypted()) {
+    if (!key.comment().isEmpty()) {
         m_sshAgentUi->commentTextLabel->setText(key.comment());
-    } else {
-        m_sshAgentUi->commentTextLabel->setText(tr("(encrypted)"));
-        m_sshAgentUi->decryptButton->setEnabled(true);
     }
+
+    m_sshAgentUi->decryptButton->setEnabled(key.encrypted());
 
     if (!key.publicKey().isEmpty()) {
         m_sshAgentUi->publicKeyEdit->document()->setPlainText(key.publicKey());
         m_sshAgentUi->copyToClipboardButton->setEnabled(true);
-    } else {
-        m_sshAgentUi->publicKeyEdit->document()->setPlainText(tr("(encrypted)"));
-        m_sshAgentUi->copyToClipboardButton->setDisabled(true);
     }
 
     // enable agent buttons only if we have an agent running
     if (sshAgent()->isAgentRunning()) {
         m_sshAgentUi->addToAgentButton->setEnabled(true);
         m_sshAgentUi->removeFromAgentButton->setEnabled(true);
+        m_sshAgentUi->clearAgentButton->setEnabled(true);
 
         sshAgent()->setAutoRemoveOnLock(key, m_sshAgentUi->removeKeyFromAgentCheckBox->isChecked());
     }
@@ -709,6 +752,13 @@ void EditEntryWidget::toKeeAgentSettings(KeeAgentSettings& settings) const
 
     // we don't use this either but we don't want it to dirty flag the config
     settings.setSaveAttachmentToTempFile(m_sshAgentSettings.saveAttachmentToTempFile());
+}
+
+void EditEntryWidget::updateTotp()
+{
+    if (m_entry) {
+        m_attributesModel->setEntryAttributes(m_entry->attributes());
+    }
 }
 
 void EditEntryWidget::browsePrivateKey()
@@ -778,11 +828,18 @@ void EditEntryWidget::removeKeyFromAgent()
     }
 }
 
+void EditEntryWidget::clearAgent()
+{
+    auto ret = sshAgent()->clearAllAgentIdentities();
+    showMessage(sshAgent()->errorString(), ret ? MessageWidget::Positive : KMessageWidget::Error);
+}
+
 void EditEntryWidget::decryptPrivateKey()
 {
     OpenSSHKey key;
 
     if (!getOpenSSHKey(key, true)) {
+        showMessage(tr("Failed to decrypt SSH key, ensure password is correct."), MessageWidget::Error);
         return;
     }
 
@@ -796,6 +853,7 @@ void EditEntryWidget::decryptPrivateKey()
                                                 + key.fingerprint(QCryptographicHash::Sha256));
     m_sshAgentUi->publicKeyEdit->document()->setPlainText(key.publicKey());
     m_sshAgentUi->copyToClipboardButton->setEnabled(true);
+    m_sshAgentUi->decryptButton->setEnabled(false);
 }
 
 void EditEntryWidget::copyPublicKey()
@@ -867,8 +925,6 @@ void EditEntryWidget::loadEntry(Entry* entry,
     m_create = create;
     m_history = history;
 
-    connect(m_entry, &Entry::modified, this, [this] { m_entryModifiedTimer.start(); });
-
     if (history) {
         setHeadline(QString("%1 \u2022 %2").arg(parentName, tr("Entry history")));
     } else {
@@ -876,13 +932,15 @@ void EditEntryWidget::loadEntry(Entry* entry,
             setHeadline(QString("%1 \u2022 %2").arg(parentName, tr("Add entry")));
         } else {
             setHeadline(QString("%1 \u2022 %2 \u2022 %3").arg(parentName, entry->title(), tr("Edit entry")));
+            // Reload entry details if changed outside of the edit dialog
+            connect(m_entry, &Entry::modified, this, [this] { m_entryModifiedTimer.start(); });
         }
     }
 
     setForms(entry);
     setReadOnly(m_history);
 
-    setCurrentPage(0);
+    switchToPage(Page::Main);
     setPageHidden(m_historyWidget, m_history || m_entry->historyItems().count() < 1);
 #ifdef WITH_XC_SSHAGENT
     setPageHidden(m_sshAgentWidget, !sshAgent()->isEnabled());
@@ -890,6 +948,12 @@ void EditEntryWidget::loadEntry(Entry* entry,
 
     // Force the user to Save/Discard new entries
     showApplyButton(!m_create);
+
+    // Set an initial password for new entries if the option is enabled
+    if (create && config()->get(Config::AutoGeneratePasswordForNewEntries).toBool()) {
+        PasswordGenerator generator;
+        m_mainUi->passwordEdit->setText(generator.generatePassword());
+    }
 
     setModified(false);
 }
@@ -909,6 +973,7 @@ void EditEntryWidget::setForms(Entry* entry, bool restore)
     m_mainUi->expireDatePicker->setReadOnly(m_history);
     m_mainUi->revealNotesButton->setIcon(icons()->onOffIcon("password-show", false));
     m_mainUi->revealNotesButton->setVisible(config()->get(Config::Security_HideNotes).toBool());
+    m_mainUi->revealNotesButton->setChecked(false);
     m_mainUi->notesEdit->setReadOnly(m_history);
     m_mainUi->notesEdit->setVisible(!config()->get(Config::Security_HideNotes).toBool());
     if (config()->get(Config::GUI_MonospaceNotes).toBool()) {
@@ -1126,7 +1191,7 @@ bool EditEntryWidget::commitEntry()
                                         MessageBox::Yes | MessageBox::No,
                                         MessageBox::Yes);
         if (res == MessageBox::Yes) {
-            setCurrentPage(3);
+            switchToPage(Page::AutoType);
             return false;
         }
     }
@@ -1141,7 +1206,7 @@ bool EditEntryWidget::commitEntry()
                                      MessageBox::Yes | MessageBox::No,
                                      MessageBox::Yes);
             if (res == MessageBox::Yes) {
-                setCurrentPage(3);
+                switchToPage(Page::AutoType);
                 return false;
             }
         }
@@ -1165,27 +1230,33 @@ bool EditEntryWidget::commitEntry()
     toKeeAgentSettings(m_sshAgentSettings);
 #endif
 
+    // Begin entry update
+    if (!m_create) {
+        m_entry->beginUpdate();
+    }
+
 #ifdef WITH_XC_BROWSER
     if (config()->get(Config::Browser_Enabled).toBool()) {
         updateBrowser();
     }
 #endif
 
-    if (!m_create) {
-        m_entry->beginUpdate();
-    }
-
     updateEntryData(m_entry);
 
     if (!m_create) {
         m_entry->endUpdate();
     }
+    // End entry update
 
     m_historyModel->setEntries(m_entry->historyItems(), m_entry);
+    setPageHidden(m_historyWidget, m_history || m_entry->historyItems().count() < 1);
     m_advancedUi->attachmentsWidget->linkAttachments(m_entry->attachments());
 
     showMessage(tr("Entry updated successfully."), MessageWidget::Positive);
     setModified(false);
+    // Prevent a reload due to entry modified signals
+    m_entryModifiedTimer.stop();
+
     return true;
 }
 
@@ -1210,7 +1281,10 @@ void EditEntryWidget::updateEntryData(Entry* entry) const
     entry->setPassword(m_mainUi->passwordEdit->text());
     entry->setExpires(m_mainUi->expireCheck->isChecked());
     entry->setExpiryTime(m_mainUi->expireDatePicker->dateTime().toUTC());
-    entry->setTags(m_mainUi->tagsList->tags().toSet().toList().join(";")); // remove repeated tags
+
+    QStringList uniqueTags(m_mainUi->tagsList->tags());
+    uniqueTags.removeDuplicates();
+    entry->setTags(uniqueTags.join(";"));
 
     entry->setNotes(m_mainUi->notesEdit->toPlainText());
 
@@ -1623,21 +1697,21 @@ void EditEntryWidget::deleteAllHistoryEntries()
 QMenu* EditEntryWidget::createPresetsMenu()
 {
     auto* expirePresetsMenu = new QMenu(this);
-    expirePresetsMenu->addAction(tr("%n hour(s)", nullptr, 12))->setData(QVariant::fromValue(TimeDelta::fromHours(12)));
-    expirePresetsMenu->addAction(tr("%n hour(s)", nullptr, 24))->setData(QVariant::fromValue(TimeDelta::fromHours(24)));
+    expirePresetsMenu->addAction(tr("%n hour(s)", "", 12))->setData(QVariant::fromValue(TimeDelta::fromHours(12)));
+    expirePresetsMenu->addAction(tr("%n hour(s)", "", 24))->setData(QVariant::fromValue(TimeDelta::fromHours(24)));
     expirePresetsMenu->addSeparator();
-    expirePresetsMenu->addAction(tr("%n week(s)", nullptr, 1))->setData(QVariant::fromValue(TimeDelta::fromDays(7)));
-    expirePresetsMenu->addAction(tr("%n week(s)", nullptr, 2))->setData(QVariant::fromValue(TimeDelta::fromDays(14)));
-    expirePresetsMenu->addAction(tr("%n week(s)", nullptr, 3))->setData(QVariant::fromValue(TimeDelta::fromDays(21)));
+    expirePresetsMenu->addAction(tr("%n week(s)", "", 1))->setData(QVariant::fromValue(TimeDelta::fromDays(7)));
+    expirePresetsMenu->addAction(tr("%n week(s)", "", 2))->setData(QVariant::fromValue(TimeDelta::fromDays(14)));
+    expirePresetsMenu->addAction(tr("%n week(s)", "", 3))->setData(QVariant::fromValue(TimeDelta::fromDays(21)));
     expirePresetsMenu->addSeparator();
-    expirePresetsMenu->addAction(tr("%n month(s)", nullptr, 1))->setData(QVariant::fromValue(TimeDelta::fromMonths(1)));
-    expirePresetsMenu->addAction(tr("%n month(s)", nullptr, 2))->setData(QVariant::fromValue(TimeDelta::fromMonths(2)));
-    expirePresetsMenu->addAction(tr("%n month(s)", nullptr, 3))->setData(QVariant::fromValue(TimeDelta::fromMonths(3)));
-    expirePresetsMenu->addAction(tr("%n month(s)", nullptr, 6))->setData(QVariant::fromValue(TimeDelta::fromMonths(6)));
+    expirePresetsMenu->addAction(tr("%n month(s)", "", 1))->setData(QVariant::fromValue(TimeDelta::fromMonths(1)));
+    expirePresetsMenu->addAction(tr("%n month(s)", "", 2))->setData(QVariant::fromValue(TimeDelta::fromMonths(2)));
+    expirePresetsMenu->addAction(tr("%n month(s)", "", 3))->setData(QVariant::fromValue(TimeDelta::fromMonths(3)));
+    expirePresetsMenu->addAction(tr("%n month(s)", "", 6))->setData(QVariant::fromValue(TimeDelta::fromMonths(6)));
     expirePresetsMenu->addSeparator();
-    expirePresetsMenu->addAction(tr("%n year(s)", nullptr, 1))->setData(QVariant::fromValue(TimeDelta::fromYears(1)));
-    expirePresetsMenu->addAction(tr("%n year(s)", nullptr, 2))->setData(QVariant::fromValue(TimeDelta::fromYears(2)));
-    expirePresetsMenu->addAction(tr("%n year(s)", nullptr, 3))->setData(QVariant::fromValue(TimeDelta::fromYears(3)));
+    expirePresetsMenu->addAction(tr("%n year(s)", "", 1))->setData(QVariant::fromValue(TimeDelta::fromYears(1)));
+    expirePresetsMenu->addAction(tr("%n year(s)", "", 2))->setData(QVariant::fromValue(TimeDelta::fromYears(2)));
+    expirePresetsMenu->addAction(tr("%n year(s)", "", 3))->setData(QVariant::fromValue(TimeDelta::fromYears(3)));
     return expirePresetsMenu;
 }
 

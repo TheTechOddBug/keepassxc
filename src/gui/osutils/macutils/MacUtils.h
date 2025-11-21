@@ -1,6 +1,6 @@
 /*
+ *  Copyright (C) 2023 KeePassXC Team <team@keepassxc.org>
  *  Copyright (C) 2012 Felix Geyer <debfx@fobos.de>
- *  Copyright (C) 2017 KeePassXC Team <team@keepassxc.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -40,6 +40,7 @@ public:
     bool isLaunchAtStartupEnabled() const override;
     void setLaunchAtStartup(bool enable) override;
     bool isCapslockEnabled() override;
+    void setUserInputProtection(bool enable) override;
 
     WId activeWindow();
     bool raiseWindow(WId pid);
@@ -52,6 +53,8 @@ public:
     void toggleForegroundApp(bool foreground);
 
     void registerNativeEventFilter() override;
+
+    void configureWindowAndHelpMenus(QMainWindow* mainWindow, QMenu* helpMenu);
 
     bool registerGlobalShortcut(const QString& name,
                                 Qt::Key key,
@@ -66,7 +69,7 @@ public:
     bool setPreventScreenCapture(QWindow* window, bool prevent) const override;
 
 signals:
-    void lockDatabases();
+    void userSwitched();
 
 protected:
     explicit MacUtils(QObject* parent = nullptr);

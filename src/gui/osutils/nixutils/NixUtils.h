@@ -35,6 +35,7 @@ public:
     bool isLaunchAtStartupEnabled() const override;
     void setLaunchAtStartup(bool enable) override;
     bool isCapslockEnabled() override;
+    void setUserInputProtection(bool enable) override;
 
     void registerNativeEventFilter() override;
 
@@ -49,9 +50,12 @@ public:
         return false;
     }
 
+    quint64 getProcessStartTime() const;
+
 private slots:
     void handleColorSchemeRead(QDBusVariant value);
     void handleColorSchemeChanged(QString ns, QString key, QDBusVariant value);
+    void launchAtStartupRequested(uint response, const QVariantMap& results);
 
 private:
     explicit NixUtils(QObject* parent = nullptr);
@@ -80,7 +84,7 @@ private:
         PreferLight
     };
     ColorschemePref m_systemColorschemePref = ColorschemePref::PreferNone;
-    bool m_systemColorschemePrefExists;
+    bool m_systemColorschemePrefExists = false;
 
     void setColorScheme(QDBusVariant value);
 

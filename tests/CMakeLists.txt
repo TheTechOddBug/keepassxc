@@ -1,4 +1,4 @@
-#  Copyright (C) 2018 KeePassXC Team <team@keepassxc.org>
+#  Copyright (C) 2023 KeePassXC Team <team@keepassxc.org>
 #  Copyright (C) 2010 Felix Geyer <debfx@fobos.de>
 #
 #  This program is free software: you can redistribute it and/or modify
@@ -90,7 +90,7 @@ macro(add_unit_test)
     endif()
 endmacro(add_unit_test)
 
-set(TEST_LIBRARIES keepassx_core Qt5::Test)
+set(TEST_LIBRARIES keepassxc_gui Qt5::Test)
 
 set(testsupport_SOURCES
         modeltest.cpp
@@ -142,8 +142,8 @@ add_unit_test(NAME testdeletedobjects SOURCES TestDeletedObjects.cpp
 add_unit_test(NAME testkeepass1reader SOURCES TestKeePass1Reader.cpp
         LIBS ${TEST_LIBRARIES})
 
-add_unit_test(NAME testopvaultreader SOURCES TestOpVaultReader.cpp
-              LIBS ${TEST_LIBRARIES})
+add_unit_test(NAME testimports SOURCES TestImports.cpp
+        LIBS ${TEST_LIBRARIES})
 
 if(WITH_XC_NETWORKING)
     add_unit_test(NAME testupdatecheck SOURCES TestUpdateCheck.cpp
@@ -154,16 +154,16 @@ endif()
 
 if(WITH_XC_AUTOTYPE)
     add_unit_test(NAME testautotype SOURCES TestAutoType.cpp
-            LIBS ${TEST_LIBRARIES})
+            LIBS testsupport ${TEST_LIBRARIES})
     set_target_properties(testautotype PROPERTIES ENABLE_EXPORTS ON)
 endif()
 
 if(WITH_XC_SSHAGENT)
     add_unit_test(NAME testopensshkey SOURCES TestOpenSSHKey.cpp
-            LIBS sshagent ${TEST_LIBRARIES})
+            LIBS sshagent testsupport ${TEST_LIBRARIES})
     if(NOT WIN32)
         add_unit_test(NAME testsshagent SOURCES TestSSHAgent.cpp
-                LIBS ${TEST_LIBRARIES})
+                LIBS sshagent testsupport ${TEST_LIBRARIES})
     endif()
 endif()
 
@@ -195,7 +195,7 @@ add_unit_test(NAME testcsvparser SOURCES TestCsvParser.cpp
         LIBS ${TEST_LIBRARIES})
 
 add_unit_test(NAME testrandomgenerator SOURCES TestRandomGenerator.cpp
-    LIBS testsupport ${TEST_LIBRARIES})
+        LIBS testsupport ${TEST_LIBRARIES})
 
 add_unit_test(NAME testentrysearcher SOURCES TestEntrySearcher.cpp
         LIBS ${TEST_LIBRARIES})
@@ -225,16 +225,25 @@ add_unit_test(NAME testconfig SOURCES TestConfig.cpp
 
 if(WITH_XC_FDOSECRETS)
     add_unit_test(NAME testfdosecrets SOURCES TestFdoSecrets.cpp
-        LIBS testsupport ${TEST_LIBRARIES})
+        LIBS testsupport fdosecrets ${TEST_LIBRARIES})
 endif()
 
 if(WITH_XC_BROWSER)
     add_unit_test(NAME testbrowser SOURCES TestBrowser.cpp
-        LIBS ${TEST_LIBRARIES})
+        LIBS browser ${TEST_LIBRARIES})
+
+    if(WITH_XC_BROWSER_PASSKEYS)
+        add_unit_test(NAME testpasskeys SOURCES TestPasskeys.cpp
+            LIBS browser ${TEST_LIBRARIES})
+    endif()
+endif()
+
+if(WITH_XC_NETWORKING OR WITH_XC_BROWSER)
+    add_unit_test(NAME testurltools SOURCES TestUrlTools.cpp LIBS ${TEST_LIBRARIES})
 endif()
 
 add_unit_test(NAME testcli SOURCES TestCli.cpp
-        LIBS testsupport cli ${TEST_LIBRARIES})
+        LIBS testsupport cli ${ZXCVBN_LIBRARIES} ${TEST_LIBRARIES})
 target_compile_definitions(testcli PRIVATE KEEPASSX_CLI_PATH="$<TARGET_FILE:keepassxc-cli>")
 
 if(WITH_GUI_TESTS)

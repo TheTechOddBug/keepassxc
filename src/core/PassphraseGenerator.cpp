@@ -18,12 +18,14 @@
 #include "PassphraseGenerator.h"
 
 #include <QFile>
+#include <QSet>
 #include <QTextStream>
 #include <cmath>
 
 #include "core/Resources.h"
 #include "crypto/Random.h"
 
+const int PassphraseGenerator::DefaultWordCount = 7;
 const char* PassphraseGenerator::DefaultSeparator = " ";
 const char* PassphraseGenerator::DefaultWordList = "eff_large.wordlist";
 
@@ -60,14 +62,17 @@ void PassphraseGenerator::setWordCase(PassphraseWordCase wordCase)
 void PassphraseGenerator::setWordList(const QString& path)
 {
     m_wordlist.clear();
+    // Initially load wordlist into a set to avoid duplicates
+    QSet<QString> wordset;
 
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        qWarning("Couldn't load passphrase wordlist.");
+        qWarning("Couldn't load passphrase wordlist: %s", qPrintable(path));
         return;
     }
 
     QTextStream in(&file);
+    in.setCodec("UTF-8");
     QString line = in.readLine();
     bool isSigned = line.startsWith("-----BEGIN PGP SIGNED MESSAGE-----");
     if (isSigned) {
@@ -87,14 +92,15 @@ void PassphraseGenerator::setWordList(const QString& path)
         line = line.trimmed();
         line.replace(rx, "\\2");
         if (!line.isEmpty()) {
-            m_wordlist.append(line);
+            wordset.insert(line);
         }
         line = in.readLine();
     }
 
-    if (m_wordlist.size() < 4000) {
-        qWarning("Wordlist too short!");
-        return;
+    m_wordlist = wordset.toList();
+
+    if (!isWordListValid()) {
+        qWarning("Wordlist is less than minimum acceptable size: %s", qPrintable(path));
     }
 }
 
@@ -111,18 +117,15 @@ void PassphraseGenerator::setWordSeparator(const QString& separator)
 
 QString PassphraseGenerator::generatePassphrase() const
 {
-    QString tmpWord;
-    Q_ASSERT(isValid());
-
-    // In case there was an error loading the wordlist
-    if (m_wordlist.length() == 0) {
+    if (m_wordlist.isEmpty()) {
         return {};
     }
 
     QStringList words;
+    int randomIndex = randomGen()->randomUInt(static_cast<quint32>(m_wordCount));
     for (int i = 0; i < m_wordCount; ++i) {
-        int wordIndex = randomGen()->randomUInt(static_cast<quint32>(m_wordlist.length()));
-        tmpWord = m_wordlist.at(wordIndex);
+        int wordIndex = randomGen()->randomUInt(static_cast<quint32>(m_wordlist.size()));
+        auto tmpWord = m_wordlist.at(wordIndex);
 
         // convert case
         switch (m_wordCase) {
@@ -132,8 +135,10 @@ QString PassphraseGenerator::generatePassphrase() const
         case TITLECASE:
             tmpWord = tmpWord.replace(0, 1, tmpWord.left(1).toUpper());
             break;
+        case MIXEDCASE:
+            tmpWord = i == randomIndex ? tmpWord.toUpper() : tmpWord.toLower();
+            break;
         case LOWERCASE:
-        default:
             tmpWord = tmpWord.toLower();
             break;
         }
@@ -143,11 +148,7 @@ QString PassphraseGenerator::generatePassphrase() const
     return words.join(m_separator);
 }
 
-bool PassphraseGenerator::isValid() const
+bool PassphraseGenerator::isWordListValid() const
 {
-    if (m_wordCount == 0) {
-        return false;
-    }
-
-    return m_wordlist.size() >= 1000;
+    return m_wordlist.size() >= m_minWordListSize;
 }

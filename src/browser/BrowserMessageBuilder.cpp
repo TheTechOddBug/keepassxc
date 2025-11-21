@@ -19,11 +19,14 @@
 #include "BrowserShared.h"
 #include "config-keepassx.h"
 #include "core/Global.h"
-#include "core/Tools.h"
 
+#include <QCryptographicHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#ifdef QT_DEBUG
+#include <QDebug>
+#endif
 
 #include <botan/sodium.h>
 
@@ -125,6 +128,34 @@ QString BrowserMessageBuilder::getErrorMessage(const int errorCode) const
         return QObject::tr("No valid UUID provided");
     case ERROR_KEEPASS_ACCESS_TO_ALL_ENTRIES_DENIED:
         return QObject::tr("Access to all entries is denied");
+    case ERROR_PASSKEYS_ATTESTATION_NOT_SUPPORTED:
+        return QObject::tr("Attestation not supported");
+    case ERROR_PASSKEYS_CREDENTIAL_IS_EXCLUDED:
+        return QObject::tr("Credential is excluded");
+    case ERROR_PASSKEYS_REQUEST_CANCELED:
+        return QObject::tr("Passkeys request canceled");
+    case ERROR_PASSKEYS_INVALID_USER_VERIFICATION:
+        return QObject::tr("Invalid user verification");
+    case ERROR_PASSKEYS_EMPTY_PUBLIC_KEY:
+        return QObject::tr("Empty public key");
+    case ERROR_PASSKEYS_INVALID_URL_PROVIDED:
+        return QObject::tr("Invalid URL provided");
+    case ERROR_PASSKEYS_ORIGIN_NOT_ALLOWED:
+        return QObject::tr("Origin is empty or not allowed");
+    case ERROR_PASSKEYS_DOMAIN_IS_NOT_VALID:
+        return QObject::tr("Effective domain is not a valid domain");
+    case ERROR_PASSKEYS_DOMAIN_RPID_MISMATCH:
+        return QObject::tr("Origin and RP ID do not match");
+    case ERROR_PASSKEYS_NO_SUPPORTED_ALGORITHMS:
+        return QObject::tr("No supported algorithms were provided");
+    case ERROR_PASSKEYS_WAIT_FOR_LIFETIMER:
+        return QObject::tr("Wait for timer to expire");
+    case ERROR_PASSKEYS_UNKNOWN_ERROR:
+        return QObject::tr("Unknown passkeys error");
+    case ERROR_PASSKEYS_INVALID_CHALLENGE:
+        return QObject::tr("Challenge is shorter than required minimum length");
+    case ERROR_PASSKEYS_INVALID_USER_ID:
+        return QObject::tr("user.id does not match the required length");
     default:
         return QObject::tr("Unknown error");
     }
@@ -243,6 +274,11 @@ QJsonObject BrowserMessageBuilder::getJsonObject(const uchar* pArray, const uint
     QByteArray arr = getQByteArray(pArray, len);
     QJsonParseError err;
     QJsonDocument doc(QJsonDocument::fromJson(arr, &err));
+#ifdef QT_DEBUG
+    if (doc.isNull()) {
+        qWarning() << "Cannot create QJsonDocument: " << err.errorString();
+    }
+#endif
     return doc.object();
 }
 
@@ -250,6 +286,12 @@ QJsonObject BrowserMessageBuilder::getJsonObject(const QByteArray& ba) const
 {
     QJsonParseError err;
     QJsonDocument doc(QJsonDocument::fromJson(ba, &err));
+#ifdef QT_DEBUG
+    if (doc.isNull()) {
+        qWarning() << "Cannot create QJsonDocument: " << err.errorString();
+    }
+#endif
+
     return doc.object();
 }
 
@@ -265,4 +307,66 @@ QString BrowserMessageBuilder::incrementNonce(const QString& nonce)
 
     sodium_increment(n.data(), n.size());
     return getQByteArray(n.data(), n.size()).toBase64();
+}
+
+QString BrowserMessageBuilder::getRandomBytesAsBase64(int bytes) const
+{
+    if (bytes == 0) {
+        return {};
+    }
+
+    std::shared_ptr<unsigned char[]> buf(new unsigned char[bytes]);
+    Botan::Sodium::randombytes_buf(buf.get(), bytes);
+
+    return getBase64FromArray(reinterpret_cast<const char*>(buf.get()), bytes);
+}
+
+QString BrowserMessageBuilder::getBase64FromArray(const char* arr, int len) const
+{
+    if (len < 1) {
+        return {};
+    }
+
+    auto data = QByteArray::fromRawData(arr, len);
+    return getBase64FromArray(data);
+}
+
+// Returns URL encoded base64 with trailing removed
+QString BrowserMessageBuilder::getBase64FromArray(const QByteArray& byteArray) const
+{
+    if (byteArray.length() < 1) {
+        return {};
+    }
+
+    return byteArray.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
+}
+
+QString BrowserMessageBuilder::getBase64FromJson(const QJsonObject& jsonObject) const
+{
+    if (jsonObject.isEmpty()) {
+        return {};
+    }
+
+    const auto dataArray = QJsonDocument(jsonObject).toJson(QJsonDocument::Compact);
+    return getBase64FromArray(dataArray);
+}
+
+QByteArray BrowserMessageBuilder::getArrayFromHexString(const QString& hexString) const
+{
+    return QByteArray::fromHex(hexString.toUtf8());
+}
+
+QByteArray BrowserMessageBuilder::getArrayFromBase64(const QString& base64str) const
+{
+    return QByteArray::fromBase64(base64str.toUtf8(), QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
+}
+
+QByteArray BrowserMessageBuilder::getSha256Hash(const QString& str) const
+{
+    return QCryptographicHash::hash(str.toUtf8(), QCryptographicHash::Sha256);
+}
+
+QString BrowserMessageBuilder::getSha256HashAsBase64(const QString& str) const
+{
+    return getBase64FromArray(QCryptographicHash::hash(str.toUtf8(), QCryptographicHash::Sha256));
 }

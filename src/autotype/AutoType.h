@@ -60,13 +60,13 @@ public slots:
 
 signals:
     void globalAutoTypeTriggered(const QString& search);
-    void autotypePerformed();
-    void autotypeRejected();
+    void autotypeFinished();
     void autotypeRetypeTimeout();
 
 private slots:
     void startGlobalAutoType(const QString& search);
     void unloadPlugin();
+    void resetAutoTypeState();
 
 private:
     enum WindowState
@@ -84,7 +84,6 @@ private:
                                 WId window = 0,
                                 AutoTypeExecutor::Mode mode = AutoTypeExecutor::Mode::NORMAL);
     void restoreWindowState();
-    void resetAutoTypeState();
 
     static QList<QSharedPointer<AutoTypeAction>>
     parseSequence(const QString& entrySequence, const Entry* entry, QString& error, bool syntaxOnly = false);

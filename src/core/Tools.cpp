@@ -5,7 +5,7 @@
  *  Copyright (C) 2020 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com,
  *  author Giuseppe D'Angelo <giuseppe.dangelo@kdab.com>
  *  Copyright (C) 2021 The Qt Company Ltd.
- *  Copyright (C) 2021 KeePassXC Team <team@keepassxc.org>
+ *  Copyright (C) 2023 KeePassXC Team <team@keepassxc.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -35,6 +35,7 @@
 #include <QIODevice>
 #include <QLocale>
 #include <QMetaProperty>
+#include <QMimeDatabase>
 #include <QRegularExpression>
 #include <QStringList>
 #include <QUrl>
@@ -77,7 +78,6 @@ namespace Tools
 #endif
         debugInfo.append("\n");
 
-#if QT_VERSION >= QT_VERSION_CHECK(5, 4, 0)
         debugInfo.append(QObject::tr("Operating system: %1\nCPU architecture: %2\nKernel: %3 %4")
                              .arg(QSysInfo::prettyProductName(),
                                   QSysInfo::currentCpuArchitecture(),
@@ -85,7 +85,6 @@ namespace Tools
                                   QSysInfo::kernelVersion()));
 
         debugInfo.append("\n\n");
-#endif
 
         QString extensions;
 #ifdef WITH_XC_AUTOTYPE
@@ -93,6 +92,9 @@ namespace Tools
 #endif
 #ifdef WITH_XC_BROWSER
         extensions += "\n- " + QObject::tr("Browser Integration");
+#endif
+#ifdef WITH_XC_BROWSER_PASSKEYS
+        extensions += "\n- " + QObject::tr("Passkeys");
 #endif
 #ifdef WITH_XC_SSHAGENT
         extensions += "\n- " + QObject::tr("SSH Agent");
@@ -123,10 +125,7 @@ namespace Tools
         constexpr auto kibibyte = 1024;
         double size = bytes;
 
-        QStringList units = QStringList() << "B"
-                                          << "KiB"
-                                          << "MiB"
-                                          << "GiB";
+        QStringList units = QStringList() << "B" << "KiB" << "MiB" << "GiB";
         int i = 0;
         int maxI = units.size() - 1;
 
@@ -135,7 +134,9 @@ namespace Tools
             i++;
         }
 
-        return QString("%1 %2").arg(QLocale().toString(size, 'f', precision), units.at(i));
+        // do not display decimals for smallest unit bytes identified by index i==0
+        const quint32 displayPrecision = (i == 0 ? 0 : precision);
+        return QString("%1 %2").arg(QLocale().toString(size, 'f', displayPrecision), units.at(i));
     }
 
     QString humanReadableTimeDifference(qint64 seconds)
@@ -150,23 +151,23 @@ namespace Tools
 
         if (seconds >= secondsInYear) {
             auto years = std::floor(seconds / secondsInYear);
-            return QObject::tr("over %1 year(s)", nullptr, years).arg(years);
+            return QObject::tr("over %1 year(s)", "", years).arg(years);
         } else if (seconds >= secondsInMonth) {
             auto months = std::round(seconds / secondsInMonth);
-            return QObject::tr("about %1 month(s)", nullptr, months).arg(months);
+            return QObject::tr("about %1 month(s)", "", months).arg(months);
         } else if (seconds >= secondsInWeek) {
             auto weeks = std::round(seconds / secondsInWeek);
-            return QObject::tr("%1 week(s)", nullptr, weeks).arg(weeks);
+            return QObject::tr("%1 week(s)", "", weeks).arg(weeks);
         } else if (seconds >= secondsInDay) {
             auto days = std::floor(seconds / secondsInDay);
-            return QObject::tr("%1 day(s)", nullptr, days).arg(days);
+            return QObject::tr("%1 day(s)", "", days).arg(days);
         } else if (seconds >= secondsInHour) {
             auto hours = std::floor(seconds / secondsInHour);
-            return QObject::tr("%1 hour(s)", nullptr, hours).arg(hours);
+            return QObject::tr("%1 hour(s)", "", hours).arg(hours);
         }
 
         auto minutes = std::floor(seconds / 60);
-        return QObject::tr("%1 minute(s)", nullptr, minutes).arg(minutes);
+        return QObject::tr("%1 minute(s)", "", minutes).arg(minutes);
     }
 
     bool readFromDevice(QIODevice* device, QByteArray& data, int size)
@@ -227,6 +228,13 @@ namespace Tools
         return regexp.exactMatch(base64);
     }
 
+    bool isAsciiString(const QString& str)
+    {
+        constexpr auto pattern = R"(^[\x00-\x7F]+$)";
+        QRegularExpression regexp(pattern, QRegularExpression::CaseInsensitiveOption);
+        return regexp.match(str).hasMatch();
+    }
+
     void sleep(int ms)
     {
         Q_ASSERT(ms >= 0);
@@ -269,35 +277,6 @@ namespace Tools
                 }
             } while (!timer.hasExpired(ms));
         }
-    }
-
-    bool checkUrlValid(const QString& urlField)
-    {
-        if (urlField.isEmpty() || urlField.startsWith("cmd://", Qt::CaseInsensitive)
-            || urlField.startsWith("kdbx://", Qt::CaseInsensitive)
-            || urlField.startsWith("{REF:A", Qt::CaseInsensitive)) {
-            return true;
-        }
-
-        QUrl url;
-        if (urlField.contains("://")) {
-            url = urlField;
-        } else {
-            url = QUrl::fromUserInput(urlField);
-        }
-
-        if (url.scheme() != "file" && url.host().isEmpty()) {
-            return false;
-        }
-
-        // Check for illegal characters. Adds also the wildcard * to the list
-        QRegularExpression re("[<>\\^`{|}\\*]");
-        auto match = re.match(urlField);
-        if (match.hasMatch()) {
-            return false;
-        }
-
-        return true;
     }
 
     /****************************************************************************
@@ -437,6 +416,44 @@ namespace Tools
         return subbed;
     }
 
+    QString cleanFilename(QString filename)
+    {
+        // Remove forward slash from title on all platforms
+        filename.replace("/", "_");
+        // Remove invalid characters
+        filename.remove(QRegularExpression("[:*?\"<>|]"));
+
+        return filename.trimmed();
+    }
+
+    QString cleanUsername()
+    {
+#if defined(Q_OS_WIN)
+        QString userName = qgetenv("USERNAME");
+        if (userName.isEmpty()) {
+            userName = qgetenv("USER");
+        }
+#else
+        QString userName = qgetenv("USER");
+        if (userName.isEmpty()) {
+            userName = qgetenv("USERNAME");
+        }
+#endif
+        // Sanitize username for file safety
+        userName = userName.trimmed();
+        // Replace <>:"/\|?* with _
+        userName.replace(QRegularExpression(R"([<>:\"\/\\|?*])"), "_");
+        // Remove trailing dots and spaces
+        userName.replace(QRegularExpression(R"([.\s]+$)"), "");
+
+        return userName;
+    }
+
+    QString escapeAccelerators(QString string)
+    {
+        return string.replace("&", "&&");
+    }
+
     QVariantMap qo2qvm(const QObject* object, const QStringList& ignoredProperties)
     {
         QVariantMap result;
@@ -458,34 +475,89 @@ namespace Tools
 
     QString substituteBackupFilePath(QString pattern, const QString& databasePath)
     {
-        // Fail if substitution fails
         if (databasePath.isEmpty()) {
             return {};
         }
 
-        // Replace backup pattern
-        QFileInfo dbFileInfo(databasePath);
-        QString baseName = dbFileInfo.completeBaseName();
+        const QString baseName = QFileInfo{databasePath}.completeBaseName();
 
-        pattern.replace(QString("{DB_FILENAME}"), baseName);
+        pattern.replace(QStringLiteral("{DB_FILENAME}"), baseName);
 
-        auto re = QRegularExpression(R"(\{TIME(?::([^\\]*))?\})");
+        const QDateTime now = Clock::currentDateTime();
+
+        const QRegularExpression re(R"(\{TIME(?::([^\\{}]*))?\})");
         auto match = re.match(pattern);
         while (match.hasMatch()) {
-            // Extract time format specifier
-            auto formatSpecifier = QString("dd_MM_yyyy_hh-mm-ss");
+            // Extract time format specifier, or use default value if absent
+            QString formatSpecifier = "dd_MM_yyyy_hh-mm-ss";
             if (!match.captured(1).isEmpty()) {
                 formatSpecifier = match.captured(1);
             }
-            auto replacement = Clock::currentDateTime().toString(formatSpecifier);
+            const auto replacement = now.toString(formatSpecifier);
             pattern.replace(match.capturedStart(), match.capturedLength(), replacement);
             match = re.match(pattern);
         }
 
         // Replace escaped braces
-        pattern.replace("\\{", "{");
-        pattern.replace("\\}", "}");
+        pattern.replace(QStringLiteral("\\{"), QStringLiteral("{"));
+        pattern.replace(QStringLiteral("\\}"), QStringLiteral("}"));
 
         return pattern;
     }
+
+    MimeType toMimeType(const QString& mimeName)
+    {
+        const static QStringList TextFormats = {"text/",
+                                                "application/json",
+                                                "application/xml",
+                                                "application/soap+xml",
+                                                "application/x-yaml",
+                                                "application/protobuf",
+                                                "application/x-zerosize"};
+        const static QStringList HtmlFormats = {"text/html"};
+        const static QStringList MarkdownFormats = {"text/markdown"};
+        const static QStringList ImageFormats = {"image/"};
+
+        static auto isCompatible = [](const QString& format, const QStringList& list) {
+            return std::any_of(
+                list.cbegin(), list.cend(), [&format](const auto& item) { return format.startsWith(item); });
+        };
+
+        if (isCompatible(mimeName, ImageFormats)) {
+            return MimeType::Image;
+        }
+
+        if (isCompatible(mimeName, TextFormats)) {
+            if (isCompatible(mimeName, HtmlFormats)) {
+                return MimeType::Html;
+            } else if (isCompatible(mimeName, MarkdownFormats)) {
+                return MimeType::Markdown;
+            }
+
+            return MimeType::PlainText;
+        }
+
+        return MimeType::Unknown;
+    }
+
+    MimeType getMimeType(const QByteArray& data)
+    {
+        QMimeDatabase mimeDb;
+        const auto mime = mimeDb.mimeTypeForData(data);
+        return toMimeType(mime.name());
+    }
+
+    MimeType getMimeType(const QFileInfo& fileInfo)
+    {
+        QMimeDatabase mimeDb;
+        const auto mime = mimeDb.mimeTypeForFile(fileInfo);
+        return toMimeType(mime.name());
+    }
+
+    bool isTextMimeType(MimeType mimeType)
+    {
+        return mimeType == Tools::MimeType::PlainText || mimeType == Tools::MimeType::Html
+               || mimeType == Tools::MimeType::Markdown;
+    }
+
 } // namespace Tools

@@ -53,10 +53,12 @@ public slots:
     void calculateHealth();
     void emitEntryActivated(const QModelIndex& index);
     void customMenuRequested(QPoint);
+    QList<Entry*> getSelectedEntries();
+    void expireSelectedEntries();
     void deleteSelectedEntries();
 
 private:
-    void addHealthRow(QSharedPointer<PasswordHealth>, Group*, Entry*, bool knownBad);
+    void addHealthRow(QSharedPointer<PasswordHealth>, Group*, Entry*, bool excluded);
 
     QScopedPointer<Ui::ReportsWidgetHealthcheck> m_ui;
 

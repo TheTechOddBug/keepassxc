@@ -18,6 +18,7 @@
 
 #include "Icons.h"
 
+#include <QBuffer>
 #include <QIconEngine>
 #include <QImageReader>
 #include <QPaintDevice>
@@ -25,6 +26,7 @@
 
 #include "config-keepassx.h"
 #include "core/Config.h"
+#include "core/Database.h"
 #include "gui/DatabaseIcons.h"
 #include "gui/MainWindow.h"
 #include "gui/osutils/OSUtils.h"
@@ -84,28 +86,28 @@ QIcon Icons::trayIcon(bool unlocked)
         suffix = "-locked";
     }
 
-    auto iconApperance = trayIconAppearance();
-    if (!iconApperance.startsWith("monochrome")) {
+    auto iconAppearance = trayIconAppearance();
+    if (!iconAppearance.startsWith("monochrome")) {
         return icon(QString("%1%2").arg(applicationIconName(), suffix), false);
     }
 
     QIcon i;
-#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+#if defined(Q_OS_WIN)
     if (osUtils->isStatusBarDark()) {
         i = icon(QString("keepassxc-monochrome-light%1").arg(suffix), false);
     } else {
         i = icon(QString("keepassxc-monochrome-dark%1").arg(suffix), false);
     }
+#elif defined(Q_OS_MACOS)
+    i = icon(QString("keepassxc-monochrome-light%1").arg(suffix), false);
 #else
-    i = icon(QString("%1-%2%3").arg(applicationIconName(), iconApperance, suffix), false);
+    i = icon(QString("%1-%2%3").arg(applicationIconName(), iconAppearance, suffix), false);
 #endif
-#if QT_VERSION >= QT_VERSION_CHECK(5, 6, 0)
     // Set as mask to allow the operating system to recolour the tray icon. This may look weird
     // if we failed to detect the status bar background colour correctly, but it is certainly
     // better than a barely visible icon and even if we did guess correctly, it allows for better
     // integration should the system's preferred colours not be 100% black or white.
     i.setIsMask(true);
-#endif
     return i;
 }
 
@@ -119,11 +121,7 @@ AdaptiveIconEngine::AdaptiveIconEngine(QIcon baseIcon, QColor overrideColor)
 void AdaptiveIconEngine::paint(QPainter* painter, const QRect& rect, QIcon::Mode mode, QIcon::State state)
 {
     // Temporary image canvas to ensure that the background is transparent and alpha blending works.
-#if QT_VERSION >= QT_VERSION_CHECK(5, 6, 0)
     auto scale = painter->device()->devicePixelRatioF();
-#else
-    auto scale = painter->device()->devicePixelRatio();
-#endif
     QImage img(rect.size() * scale, QImage::Format_ARGB32_Premultiplied);
     img.fill(0);
     QPainter p(&img);
@@ -189,9 +187,7 @@ QIcon Icons::icon(const QString& name, bool recolor, const QColor& overrideColor
     icon = QIcon::fromTheme(name);
     if (recolor) {
         icon = QIcon(new AdaptiveIconEngine(icon, overrideColor));
-#if QT_VERSION >= QT_VERSION_CHECK(5, 6, 0)
         icon.setIsMask(true);
-#endif
     }
 
     m_iconCache.insert(cacheName, icon);

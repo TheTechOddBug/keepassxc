@@ -54,6 +54,12 @@ ShareObserver::ShareObserver(QSharedPointer<Database> db, QObject* parent)
 
 ShareObserver::~ShareObserver()
 {
+    m_db->disconnect(this);
+}
+
+void ShareObserver::setEnabled(bool enabled)
+{
+    m_enabled = enabled;
 }
 
 void ShareObserver::deinitialize()
@@ -176,7 +182,7 @@ void ShareObserver::handleDatabaseChanged()
         return;
     }
     const auto active = KeeShare::active();
-    if (!active.out && !active.in) {
+    if (!m_enabled || (!active.out && !active.in)) {
         deinitialize();
     } else {
         reinitialize();

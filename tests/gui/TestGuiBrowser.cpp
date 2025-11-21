@@ -41,10 +41,8 @@
 
 int main(int argc, char* argv[])
 {
-#if QT_VERSION >= QT_VERSION_CHECK(5, 6, 0)
     QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     QGuiApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
-#endif
     Application app(argc, argv);
     app.setApplicationName("KeePassXC");
     app.setApplicationVersion(KEEPASSXC_VERSION);
@@ -60,7 +58,8 @@ int main(int argc, char* argv[])
 void TestGuiBrowser::initTestCase()
 {
     QVERIFY(Crypto::init());
-    Config::createTempFileInstance();
+    // Create temporary config file
+    Config::createConfigFromFile(TemporaryFile::createTempConfigFile(), {});
     // Disable autosave so we can test the modified file indicator
     config()->set(Config::AutoSaveAfterEveryChange, false);
     config()->set(Config::AutoSaveOnExit, false);
@@ -144,7 +143,7 @@ void TestGuiBrowser::testEntrySettings()
     auto* entryEditAction = m_mainWindow->findChild<QAction*>("actionEntryEdit");
     QWidget* entryEditWidget = toolBar->widgetForAction(entryEditAction);
     QTest::mouseClick(entryEditWidget, Qt::LeftButton);
-    QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::EditMode);
+    QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::EditEntryMode);
     auto* editEntryWidget = m_dbWidget->findChild<EditEntryWidget*>("editEntryWidget");
 
     // Switch to Properties page and select all rows from the custom data table
@@ -188,7 +187,7 @@ void TestGuiBrowser::testAdditionalURLs()
     auto* entryEditAction = m_mainWindow->findChild<QAction*>("actionEntryEdit");
     QWidget* entryEditWidget = toolBar->widgetForAction(entryEditAction);
     QTest::mouseClick(entryEditWidget, Qt::LeftButton);
-    QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::EditMode);
+    QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::EditEntryMode);
     auto* editEntryWidget = m_dbWidget->findChild<EditEntryWidget*>("editEntryWidget");
 
     // Switch to Browser Integration page and add three URL's

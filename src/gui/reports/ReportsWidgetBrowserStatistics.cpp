@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2021 KeePassXC Team <team@keepassxc.org>
+ *  Copyright (C) 2024 KeePassXC Team <team@keepassxc.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -27,7 +27,6 @@
 #include "gui/styles/StateColorPalette.h"
 
 #include <QJsonDocument>
-#include <QJsonObject>
 #include <QMenu>
 #include <QShortcut>
 #include <QSortFilterProxyModel>
@@ -112,8 +111,8 @@ ReportsWidgetBrowserStatistics::ReportsWidgetBrowserStatistics(QWidget* parent)
     connect(
         m_ui->browserStatisticsTableView, SIGNAL(doubleClicked(QModelIndex)), SLOT(emitEntryActivated(QModelIndex)));
     connect(m_ui->showEntriesWithUrlOnlyCheckBox, SIGNAL(stateChanged(int)), this, SLOT(calculateBrowserStatistics()));
-    connect(m_ui->showConnectedOnlyCheckBox, SIGNAL(stateChanged(int)), this, SLOT(calculateBrowserStatistics()));
-    connect(m_ui->excludeExpired, SIGNAL(stateChanged(int)), this, SLOT(calculateBrowserStatistics()));
+    connect(m_ui->showAllowDenyCheckBox, SIGNAL(stateChanged(int)), this, SLOT(calculateBrowserStatistics()));
+    connect(m_ui->showExpired, SIGNAL(stateChanged(int)), this, SLOT(calculateBrowserStatistics()));
 
     new QShortcut(Qt::Key_Delete, this, SLOT(deleteSelectedEntries()));
 }
@@ -143,6 +142,9 @@ void ReportsWidgetBrowserStatistics::addStatisticsRow(bool hasUrls,
     auto title = entry->title();
     if (excluded) {
         title.append(tr(" (Excluded)"));
+    }
+    if (entry->isExpired()) {
+        title.append(tr(" (Expired)"));
     }
 
     auto row = QList<QStandardItem*>();
@@ -196,16 +198,15 @@ void ReportsWidgetBrowserStatistics::calculateBrowserStatistics()
     const QScopedPointer<BrowserStatistics> browserStatistics(
         AsyncTask::runAndWaitForFuture([this] { return new BrowserStatistics(m_db); }));
 
-    const auto showExcluded = m_ui->showConnectedOnlyCheckBox->isChecked();
+    const auto showExpired = m_ui->showExpired->isChecked();
     const auto showEntriesWithUrlOnly = m_ui->showEntriesWithUrlOnlyCheckBox->isChecked();
-    const auto showOnlyEntriesWithSettings = m_ui->showConnectedOnlyCheckBox->isChecked();
+    const auto showOnlyEntriesWithSettings = m_ui->showAllowDenyCheckBox->isChecked();
 
     // Display the entries
     m_rowToEntry.clear();
     for (const auto& item : browserStatistics->items()) {
-        auto excluded = item->exclude || (item->entry->isExpired() && m_ui->excludeExpired->isChecked());
-        if (excluded && !showExcluded) {
-            // Exclude this entry from the report
+        // Check if the entry should be displayed
+        if (!showExpired && item->entry->isExpired()) {
             continue;
         }
 
@@ -274,10 +275,25 @@ void ReportsWidgetBrowserStatistics::customMenuRequested(QPoint pos)
         });
     }
 
+    // Create the "expire entry" menu item
+    const auto expEntry = new QAction(icons()->icon("entry-expire"), tr("Expire Entry(s)…", "", selected.size()), this);
+    menu->addAction(expEntry);
+    connect(expEntry, &QAction::triggered, this, &ReportsWidgetBrowserStatistics::expireSelectedEntries);
+
     // Create the "delete entry" menu item
-    const auto delEntry = new QAction(icons()->icon("entry-delete"), tr("Delete Entry(s)…", "", selected.size()), this);
-    menu->addAction(delEntry);
-    connect(delEntry, &QAction::triggered, this, &ReportsWidgetBrowserStatistics::deleteSelectedEntries);
+    const auto deleteEntry =
+        new QAction(icons()->icon("entry-delete"), tr("Delete Entry(s)…", "", selected.size()), this);
+    menu->addAction(deleteEntry);
+    connect(deleteEntry, &QAction::triggered, this, &ReportsWidgetBrowserStatistics::deleteSelectedEntries);
+
+    // Create the "delete plugin data" menu item
+    const auto deletePluginData =
+        new QAction(icons()->icon("entry-delete"), tr("Delete plugin data from Entry(s)…", "", selected.size()), this);
+    menu->addAction(deletePluginData);
+    connect(deletePluginData,
+            &QAction::triggered,
+            this,
+            &ReportsWidgetBrowserStatistics::deletePluginDataFromSelectedEntries);
 
     // Create the "exclude from reports" menu item
     const auto exclude = new QAction(icons()->icon("reports-exclude"), tr("Exclude from reports"), this);
@@ -316,7 +332,7 @@ void ReportsWidgetBrowserStatistics::saveSettings()
     // Nothing to do - the tab is passive
 }
 
-void ReportsWidgetBrowserStatistics::deleteSelectedEntries()
+QList<Entry*> ReportsWidgetBrowserStatistics::getSelectedEntries()
 {
     QList<Entry*> selectedEntries;
     for (auto index : m_ui->browserStatisticsTableView->selectionModel()->selectedRows()) {
@@ -326,10 +342,37 @@ void ReportsWidgetBrowserStatistics::deleteSelectedEntries()
             selectedEntries << entry;
         }
     }
+    return selectedEntries;
+}
 
+void ReportsWidgetBrowserStatistics::expireSelectedEntries()
+{
+    for (auto entry : getSelectedEntries()) {
+        entry->expireNow();
+    }
+
+    calculateBrowserStatistics();
+}
+
+void ReportsWidgetBrowserStatistics::deleteSelectedEntries()
+{
+    const auto& selectedEntries = getSelectedEntries();
     bool permanent = !m_db->metadata()->recycleBinEnabled();
+
     if (GuiTools::confirmDeleteEntries(this, selectedEntries, permanent)) {
         GuiTools::deleteEntriesResolveReferences(this, selectedEntries, permanent);
+    }
+
+    calculateBrowserStatistics();
+}
+
+void ReportsWidgetBrowserStatistics::deletePluginDataFromSelectedEntries()
+{
+    const auto& selectedEntries = getSelectedEntries();
+    if (GuiTools::confirmDeletePluginData(this, selectedEntries)) {
+        for (auto& entry : selectedEntries) {
+            browserService()->removePluginData(entry);
+        }
     }
 
     calculateBrowserStatistics();
@@ -369,4 +412,18 @@ QMap<QString, QStringList> ReportsWidgetBrowserStatistics::getBrowserConfigFromE
     }
 
     return configList;
+}
+
+QList<Entry*> ReportsWidgetBrowserStatistics::getSelectedEntries() const
+{
+    QList<Entry*> selectedEntries;
+    for (auto index : m_ui->browserStatisticsTableView->selectionModel()->selectedRows()) {
+        auto row = m_modelProxy->mapToSource(index).row();
+        auto entry = m_rowToEntry[row].second;
+        if (entry) {
+            selectedEntries << entry;
+        }
+    }
+
+    return selectedEntries;
 }

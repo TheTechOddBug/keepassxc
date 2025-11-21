@@ -64,16 +64,16 @@ namespace
             return m_items;
         }
 
-        bool anyKnownBad() const
+        bool anyExcludedEntries() const
         {
-            return m_anyKnownBad;
+            return m_anyExcludedEntries;
         }
 
     private:
         QSharedPointer<Database> m_db;
         HealthChecker m_checker;
         QList<QSharedPointer<Item>> m_items;
-        bool m_anyKnownBad = false;
+        bool m_anyExcludedEntries = false;
     };
 
     class ReportSortProxyModel : public QSortFilterProxyModel
@@ -121,7 +121,7 @@ Health::Health(QSharedPointer<Database> db)
             // Evaluate this entry
             const auto item = QSharedPointer<Item>(new Item(group, entry, m_checker.evaluate(entry)));
             if (item->exclude) {
-                m_anyKnownBad = true;
+                m_anyExcludedEntries = true;
             }
 
             // Add entry if its password isn't at least "good"
@@ -152,8 +152,8 @@ ReportsWidgetHealthcheck::ReportsWidgetHealthcheck(QWidget* parent)
 
     connect(m_ui->healthcheckTableView, SIGNAL(customContextMenuRequested(QPoint)), SLOT(customMenuRequested(QPoint)));
     connect(m_ui->healthcheckTableView, SIGNAL(doubleClicked(QModelIndex)), SLOT(emitEntryActivated(QModelIndex)));
-    connect(m_ui->showKnownBadCheckBox, SIGNAL(stateChanged(int)), this, SLOT(calculateHealth()));
-    connect(m_ui->excludeExpired, SIGNAL(stateChanged(int)), this, SLOT(calculateHealth()));
+    connect(m_ui->showExcluded, SIGNAL(stateChanged(int)), this, SLOT(calculateHealth()));
+    connect(m_ui->showExpired, SIGNAL(stateChanged(int)), this, SLOT(calculateHealth()));
 
     new QShortcut(Qt::Key_Delete, this, SLOT(deleteSelectedEntries()));
 }
@@ -163,44 +163,48 @@ ReportsWidgetHealthcheck::~ReportsWidgetHealthcheck() = default;
 void ReportsWidgetHealthcheck::addHealthRow(QSharedPointer<PasswordHealth> health,
                                             Group* group,
                                             Entry* entry,
-                                            bool knownBad)
+                                            bool excluded)
 {
-    QString descr, tip;
+    QString tip;
+    QString iconName = "lock-question";
     QColor qualityColor;
     StateColorPalette statePalette;
     const auto quality = health->quality();
     switch (quality) {
     case PasswordHealth::Quality::Bad:
-        descr = tr("Bad", "Password quality");
         tip = tr("Bad — password must be changed");
+        iconName = "lock-open-alert";
         qualityColor = statePalette.color(StateColorPalette::HealthCritical);
         break;
-
     case PasswordHealth::Quality::Poor:
-        descr = tr("Poor", "Password quality");
         tip = tr("Poor — password should be changed");
+        iconName = "lock-open-alert";
         qualityColor = statePalette.color(StateColorPalette::HealthBad);
         break;
 
     case PasswordHealth::Quality::Weak:
-        descr = tr("Weak", "Password quality");
         tip = tr("Weak — consider changing the password");
+        iconName = "lock-open";
         qualityColor = statePalette.color(StateColorPalette::HealthWeak);
         break;
 
     case PasswordHealth::Quality::Good:
     case PasswordHealth::Quality::Excellent:
+        iconName = "lock";
         qualityColor = statePalette.color(StateColorPalette::HealthOk);
         break;
     }
 
     auto title = entry->title();
-    if (knownBad) {
+    if (excluded) {
         title.append(tr(" (Excluded)"));
+    }
+    if (entry->isExpired()) {
+        title.append(tr(" (Expired)"));
     }
 
     auto row = QList<QStandardItem*>();
-    row << new QStandardItem(descr);
+    row << new QStandardItem(Icons::instance()->icon(iconName, true, qualityColor), "");
     row << new QStandardItem(Icons::entryIconPixmap(entry), title);
     row << new QStandardItem(Icons::groupIconPixmap(group), group->hierarchy().join("/"));
     row << new QStandardItem(QString::number(health->score()));
@@ -211,11 +215,10 @@ void ReportsWidgetHealthcheck::addHealthRow(QSharedPointer<PasswordHealth> healt
     // invisible, it's just for screen readers etc.
     QBrush brush(qualityColor);
     row[0]->setForeground(brush);
-    row[0]->setBackground(brush);
 
     // Set tooltips
     row[0]->setToolTip(tip);
-    if (knownBad) {
+    if (excluded) {
         row[1]->setToolTip(tr("This entry is being excluded from reports"));
     }
     row[4]->setToolTip(health->scoreDetails());
@@ -235,6 +238,8 @@ void ReportsWidgetHealthcheck::loadSettings(QSharedPointer<Database> db)
     auto row = QList<QStandardItem*>();
     row << new QStandardItem(tr("Please wait, health data is being calculated…"));
     m_referencesModel->appendRow(row);
+    // Default sort by first column (health score)
+    m_ui->healthcheckTableView->sortByColumn(0, Qt::AscendingOrder);
 }
 
 void ReportsWidgetHealthcheck::showEvent(QShowEvent* event)
@@ -250,20 +255,22 @@ void ReportsWidgetHealthcheck::showEvent(QShowEvent* event)
 
 void ReportsWidgetHealthcheck::calculateHealth()
 {
+    // Save current sort order before clearing the model so we can restore it later
+    int sortColumn = m_ui->healthcheckTableView->horizontalHeader()->sortIndicatorSection();
+    Qt::SortOrder sortOrder = m_ui->healthcheckTableView->horizontalHeader()->sortIndicatorOrder();
+
+    // Safe to clear
     m_referencesModel->clear();
 
     // Perform the health check
     const QScopedPointer<Health> health(AsyncTask::runAndWaitForFuture([this] { return new Health(m_db); }));
 
-    // Display entries that are marked as "known bad"?
-    const auto showExcluded = m_ui->showKnownBadCheckBox->isChecked();
-
     // Display the entries
     m_rowToEntry.clear();
     for (const auto& item : health->items()) {
-        auto excluded = item->exclude || (item->entry->isExpired() && m_ui->excludeExpired->isChecked());
-        if (excluded && !showExcluded) {
-            // Exclude this entry from the report
+        // Check if the entry should be displayed
+        if ((!m_ui->showExcluded->isChecked() && item->exclude)
+            || (!m_ui->showExpired->isChecked() && item->entry->isExpired())) {
             continue;
         }
 
@@ -277,19 +284,16 @@ void ReportsWidgetHealthcheck::calculateHealth()
     } else {
         m_referencesModel->setHorizontalHeaderLabels(QStringList() << tr("") << tr("Title") << tr("Path") << tr("Score")
                                                                    << tr("Reason"));
-        m_ui->healthcheckTableView->sortByColumn(0, Qt::AscendingOrder);
     }
+
+    // Restore sorting options that was stored before the model was cleared
+    m_ui->healthcheckTableView->sortByColumn(sortColumn, sortOrder);
 
     m_ui->healthcheckTableView->resizeColumnsToContents();
     m_ui->healthcheckTableView->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
 
-    // Show the "show known bad entries" checkbox if there's any known
-    // bad entry in the database.
-    if (health->anyKnownBad()) {
-        m_ui->showKnownBadCheckBox->show();
-    } else {
-        m_ui->showKnownBadCheckBox->hide();
-    }
+    // Only show the "show excluded" checkbox if there are any excluded entries in the database
+    m_ui->showExcluded->setVisible(health->anyExcludedEntries());
 }
 
 void ReportsWidgetHealthcheck::emitEntryActivated(const QModelIndex& index)
@@ -327,6 +331,11 @@ void ReportsWidgetHealthcheck::customMenuRequested(QPoint pos)
             emit entryActivated(entry);
         });
     }
+
+    // Create the "Expire entry" menu item
+    const auto expEntry = new QAction(icons()->icon("entry-expire"), tr("Expire Entry(s)…", "", selected.size()), this);
+    menu->addAction(expEntry);
+    connect(expEntry, &QAction::triggered, this, &ReportsWidgetHealthcheck::expireSelectedEntries);
 
     // Create the "delete entry" menu item
     const auto delEntry = new QAction(icons()->icon("entry-delete"), tr("Delete Entry(s)…", "", selected.size()), this);
@@ -370,7 +379,7 @@ void ReportsWidgetHealthcheck::saveSettings()
     // nothing to do - the tab is passive
 }
 
-void ReportsWidgetHealthcheck::deleteSelectedEntries()
+QList<Entry*> ReportsWidgetHealthcheck::getSelectedEntries()
 {
     QList<Entry*> selectedEntries;
     for (auto index : m_ui->healthcheckTableView->selectionModel()->selectedRows()) {
@@ -380,7 +389,21 @@ void ReportsWidgetHealthcheck::deleteSelectedEntries()
             selectedEntries << entry;
         }
     }
+    return selectedEntries;
+}
 
+void ReportsWidgetHealthcheck::expireSelectedEntries()
+{
+    for (auto entry : getSelectedEntries()) {
+        entry->expireNow();
+    }
+
+    calculateHealth();
+}
+
+void ReportsWidgetHealthcheck::deleteSelectedEntries()
+{
+    QList<Entry*> selectedEntries = getSelectedEntries();
     bool permanent = !m_db->metadata()->recycleBinEnabled();
     if (GuiTools::confirmDeleteEntries(this, selectedEntries, permanent)) {
         GuiTools::deleteEntriesResolveReferences(this, selectedEntries, permanent);

@@ -41,9 +41,7 @@
 
 #ifdef Q_OS_MACOS
 #include <QMainWindow>
-#if QT_VERSION >= QT_VERSION_CHECK(5, 9, 0)
 #include <QOperatingSystemVersion>
-#endif
 #endif
 
 #include "gui/Icons.h"
@@ -51,15 +49,6 @@
 QT_BEGIN_NAMESPACE
 Q_GUI_EXPORT int qt_defaultDpiX();
 QT_END_NAMESPACE
-
-// Redefine Q_FALLTHROUGH for older Qt versions
-#ifndef Q_FALLTHROUGH
-#if (defined(Q_CC_GNU) && Q_CC_GNU >= 700) && !defined(Q_CC_INTEL)
-#define Q_FALLTHROUGH() __attribute__((fallthrough))
-#else
-#define Q_FALLTHROUGH() (void)0
-#endif
-#endif
 
 namespace Phantom
 {
@@ -330,6 +319,7 @@ namespace Phantom
                 S_sliderHandle_pressed,
                 S_sliderHandle_specular,
                 S_sliderHandle_pressed_specular,
+                S_splitterHandle,
                 S_base_shadow,
                 S_base_divider,
                 S_windowText_disabled,
@@ -446,7 +436,8 @@ namespace Phantom
                 isLight ? colors[S_button_pressed] : Dc::adjustLightness(colors[S_button_pressed], 0.03);
             colors[S_sliderHandle_pressed_specular] = isLight ? Dc::specularOf(colors[S_sliderHandle_pressed])
                                                               : Dc::lightSpecularOf(colors[S_sliderHandle_pressed]);
-
+            colors[S_splitterHandle] =
+                isLight ? Dc::adjustLightness(colors[S_window], -0.1) : Dc::adjustLightness(colors[S_window], 0.15);
             colors[S_base_shadow] = Dc::overhangShadowOf(colors[S_base]);
             colors[S_base_divider] = colors[S_window_divider];
             colors[S_windowText_disabled] = pal.color(QPalette::Disabled, QPalette::WindowText);
@@ -593,7 +584,7 @@ namespace Phantom
                 } else {
                     // Remove the oldest guy from the cache. Remember that because we may
                     // re-enter QStyle functions multiple times when drawing or calculating
-                    // something, we may have to load several swaitches derived from
+                    // something, we may have to load several switches derived from
                     // different QPalettes on different stack frames at the same time. But as
                     // an extra cost-savings measure, we'll check and see if something else
                     // has a reference to the removed guy. If there aren't any references to
@@ -1033,15 +1024,6 @@ namespace Phantom
             painter->restore();
         }
 
-        int fontMetricsWidth(const QFontMetrics& fontMetrics, const QString& text)
-        {
-#if QT_VERSION < QT_VERSION_CHECK(5, 11, 0)
-            return fontMetrics.width(text, text.size(), Qt::TextBypassShaping);
-#else
-            return fontMetrics.horizontalAdvance(text);
-#endif
-        }
-
         // This always draws the arrow with the correct aspect ratio, even if the
         // provided bounding rect is non-square. The base edge of the triangle is
         // snapped to a whole pixel to avoid anti-aliasing making it look soft.
@@ -1049,7 +1031,7 @@ namespace Phantom
         // Expected time (release): 5usecs for regular-sized arrows
         Q_NEVER_INLINE void drawArrow(QPainter* p, QRect rect, Qt::ArrowType arrowDirection, const QBrush& brush)
         {
-            const qreal ArrowBaseRatio = 0.9;
+            const qreal ArrowBaseRatio = 1.0;
             qreal irx, iry, irw, irh;
             QRectF(rect).getRect(&irx, &iry, &irw, &irh);
             if (irw < 1.0 || irh < 1.0)
@@ -1476,13 +1458,13 @@ void BaseStyle::drawPrimitive(PrimitiveElement elem,
     }
     case PE_FrameDockWidget: {
         painter->save();
-        QColor softshadow = option->palette.background().color().darker(120);
+        QColor softshadow = option->palette.window().color().darker(120);
         QRect r = option->rect;
         painter->setPen(softshadow);
         painter->drawRect(r.adjusted(0, 0, -1, -1));
         painter->setPen(QPen(option->palette.light(), 1));
         painter->drawLine(QPoint(r.left() + 1, r.top() + 1), QPoint(r.left() + 1, r.bottom() - 1));
-        painter->setPen(QPen(option->palette.background().color().darker(120)));
+        painter->setPen(QPen(option->palette.window().color().darker(120)));
         painter->drawLine(QPoint(r.left() + 1, r.bottom() - 1), QPoint(r.right() - 2, r.bottom() - 1));
         painter->drawLine(QPoint(r.right() - 1, r.top() + 1), QPoint(r.right() - 1, r.bottom() - 1));
         painter->restore();
@@ -1734,12 +1716,12 @@ void BaseStyle::drawPrimitive(PrimitiveElement elem,
             // TODO replace with new code
             const int margin = 6;
             const int offset = r.height() / 2;
-            painter->setPen(QPen(option->palette.background().color().darker(110)));
+            painter->setPen(QPen(option->palette.window().color().darker(110)));
             painter->drawLine(r.topLeft().x() + margin,
                               r.topLeft().y() + offset,
                               r.topRight().x() - margin,
                               r.topRight().y() + offset);
-            painter->setPen(QPen(option->palette.background().color().lighter(110)));
+            painter->setPen(QPen(option->palette.window().color().lighter(110)));
             painter->drawLine(r.topLeft().x() + margin,
                               r.topLeft().y() + offset + 1,
                               r.topRight().x() - margin,
@@ -2226,7 +2208,7 @@ void BaseStyle::drawControl(ControlElement element,
         if (r.width() < 5 || r.height() < 5)
             break;
         int length = Ph::dpiScaled(Ph::SplitterMaxLength);
-        int thickness = Ph::dpiScaled(1);
+        int thickness = Ph::dpiScaled(2);
         QSize size;
         if (option->state & State_Horizontal) {
             if (r.height() < length)
@@ -2238,8 +2220,7 @@ void BaseStyle::drawControl(ControlElement element,
             size = QSize(length, thickness);
         }
         QRect filledRect = QStyle::alignedRect(option->direction, Qt::AlignCenter, size, r);
-        painter->fillRect(filledRect, swatch.color(S_button_specular));
-        Ph::fillRectOutline(painter, filledRect.adjusted(-1, 0, 1, 0), 1, swatch.color(S_window_divider));
+        painter->fillRect(filledRect, swatch.color(S_splitterHandle));
         break;
     }
     // TODO update this for phantom
@@ -2656,7 +2637,21 @@ void BaseStyle::drawControl(ControlElement element,
         }
         break;
     }
+    case CE_MenuTearoff: {
+        if (option->state & State_Selected) {
+            painter->fillRect(option->rect, option->palette.brush(QPalette::Highlight));
+            painter->setPen(QPen(option->palette.highlightedText().color(), 1, Qt::DashLine));
+        } else {
+            painter->fillRect(option->rect, option->palette.brush(QPalette::Button));
+            painter->setPen(QPen(option->palette.buttonText().color(), 1, Qt::DashLine));
+        }
 
+        painter->drawLine(option->rect.x() + 2,
+                          option->rect.y() + option->rect.height() / 2,
+                          option->rect.x() + option->rect.width() - 4,
+                          option->rect.y() + option->rect.height() / 2);
+        break;
+    }
     case CE_MenuItem: {
         auto menuItem = qstyleoption_cast<const QStyleOptionMenuItem*>(option);
         if (!menuItem)
@@ -2770,7 +2765,7 @@ void BaseStyle::drawControl(ControlElement element,
             // that when it is resolved against the device, this font will win. This
             // is mainly to handle cases where someone sets the font on the window
             // and then the combo inherits it and passes it onward. At that point the
-            // resolve mask is very, very weak. This makes it stonger.
+            // resolve mask is very, very weak. This makes it stronger.
 #if 0
                 QFont font = menuItem->font;
       font.setPointSizeF(QFontInfo(menuItem->font).pointSizeF());
@@ -3268,13 +3263,13 @@ void BaseStyle::drawComplexControl(ComplexControl control,
         QColor outline = option->palette.dark().color();
 
         QColor titleBarFrameBorder(active ? highlight.darker(180) : outline.darker(110));
-        QColor titleBarHighlight(active ? highlight.lighter(120) : palette.background().color().lighter(120));
+        QColor titleBarHighlight(active ? highlight.lighter(120) : palette.window().color().lighter(120));
         QColor textColor(active ? 0xffffff : 0xff000000);
         QColor textAlphaColor(active ? 0xffffff : 0xff000000);
 
         {
             // Fill title
-            auto titlebarColor = QColor(active ? highlight : palette.background().color());
+            auto titlebarColor = QColor(active ? highlight : palette.window().color());
             painter->fillRect(option->rect.adjusted(1, 1, -1, 0), titlebarColor);
             // Frame and rounded corners
             painter->setPen(titleBarFrameBorder);
@@ -3886,11 +3881,9 @@ int BaseStyle::pixelMetric(PixelMetric metric, const QStyleOption* option, const
     case PM_DockWidgetTitleBarButtonMargin:
         val = 2;
         break;
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 8, 0))
     case PM_TitleBarButtonSize:
         val = 19;
         break;
-#endif
     case PM_MaximumDragDistance:
         return -1; // Do not dpi-scale because the value is magic
     case PM_TabCloseIndicatorWidth:
@@ -4381,7 +4374,7 @@ QRect BaseStyle::subControlRect(ComplexControl control,
             int textHeight = option->fontMetrics.height();
             // width()/horizontalAdvance() is faster than size() and good enough for
             // us, since we only support a single line of text here anyway.
-            int textWidth = Phantom::fontMetricsWidth(option->fontMetrics, groupBox->text);
+            int textWidth = option->fontMetrics.horizontalAdvance(groupBox->text);
             int indicatorWidth = proxy()->pixelMetric(PM_IndicatorWidth, option, widget);
             int indicatorHeight = proxy()->pixelMetric(PM_IndicatorHeight, option, widget);
             int margin = 0;
@@ -4624,10 +4617,8 @@ int BaseStyle::styleHint(StyleHint hint,
         return Phantom::ShowItemViewDecorationSelected;
     case SH_ItemView_MovementWithoutUpdatingSelection:
         return 1;
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 7, 0))
     case SH_ItemView_ScrollMode:
         return QAbstractItemView::ScrollPerPixel;
-#endif
     case SH_ScrollBar_ContextMenu:
 #ifdef Q_OS_MAC
         return 0;

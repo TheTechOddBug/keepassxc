@@ -1,6 +1,6 @@
 /*
- *  Copyright (C) 2023 KeePassXC Team <team@keepassxc.org>
  *  Copyright (C) 2013 Felix Geyer <debfx@fobos.de>
+ *  Copyright (C) 2022 KeePassXC Team <team@keepassxc.org>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -20,7 +20,6 @@
 #define KEEPASSX_PASSWORDGENERATORWIDGET_H
 
 #include <QComboBox>
-#include <QDialog>
 #include <QTimer>
 
 #include "core/PassphraseGenerator.h"
@@ -35,7 +34,7 @@ class PasswordGenerator;
 class PasswordHealth;
 class PassphraseGenerator;
 
-class PasswordGeneratorWidget : public QDialog
+class PasswordGeneratorWidget : public QWidget
 {
     Q_OBJECT
 
@@ -68,12 +67,16 @@ public slots:
     void applyPassword();
     void copyPassword();
     void setPasswordVisible(bool visible);
-    void deleteWordList();
+    void removeCustomWordList();
     void addWordList();
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
 
 private slots:
     void updateButtonsEnabled(const QString& password);
     void updatePasswordStrength();
+    void updatePasswordLengthLabel(const QString& password);
     void setAdvancedMode(bool advanced);
     void excludeHexChars();
 
@@ -87,7 +90,6 @@ private:
     bool m_passwordGenerated = false;
     int m_firstCustomWordlistIndex;
 
-    void closeEvent(QCloseEvent* event) override;
     PasswordGenerator::CharClasses charClasses();
     PasswordGenerator::GeneratorFlags generatorFlags();
 
